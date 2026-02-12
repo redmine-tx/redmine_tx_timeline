@@ -12,6 +12,7 @@ Redmine::Plugin.register :redmine_tx_timeline do
        after: :redmine_tx_milestone, permission: :view_timeline
 
   project_module :redmine_tx_timeline do
-    permission :view_timeline, { timeline: [:index] }
+    permission :view_timeline, { timeline: [:index, :load_timeline_data] }
+    permission :edit_timeline, { timeline: [:save_timeline_data, :create_timeline] }, require: :member
   end
 end

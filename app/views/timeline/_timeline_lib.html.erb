@@ -38,7 +38,7 @@ function getCategoryColor(categoryName) {
 
   // 프로젝트 날짜 계산 함수 (드래그용)
   function calculateProjectDates($projectBar, leftPosition) {
-    var startDate = new Date(<%= start_date.to_time.to_i * 1000 %>);
+    var startDate = new Date(TL_VIEWPORT.originDate.getTime());
     var daysOffset = Math.floor(leftPosition / cellWidth); // 바닥함수로 셀 시작점 기준 계산
     
     // 시작일 계산
@@ -56,7 +56,7 @@ function getCategoryColor(categoryName) {
 
   // 프로젝트 날짜 계산 함수 (리사이즈용)
   function calculateProjectDatesFromResize($projectBar, leftPosition, width) {
-    var startDate = new Date(<%= start_date.to_time.to_i * 1000 %>);
+    var startDate = new Date(TL_VIEWPORT.originDate.getTime());
     var daysOffset = Math.floor(leftPosition / cellWidth); // 바닥함수로 셀 시작점 기준 계산
     
     // 시작일 계산
@@ -116,6 +116,86 @@ function parseLocalDate(dateString) {
   return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
 }
 
+// ============================================================
+// 동적 셀/헤더 생성 함수 (TL_VIEWPORT 기반)
+// ============================================================
+
+// 카테고리 행용 셀 HTML 생성 (data-date 없음)
+function generateCategoryCellsHtml(numDays) {
+  var html = '';
+  var w = TL_VIEWPORT.cellWidth;
+  for (var i = 0; i < numDays; i++) {
+    html += '<div class="timeline-cell" style="width: ' + w + 'px;"></div>';
+  }
+  return html;
+}
+
+// 이벤트 행용 셀 HTML 생성 (data-date + schedule-add-target 포함)
+function generateEventCellsHtml(startDate, numDays) {
+  var html = '';
+  var w = TL_VIEWPORT.cellWidth;
+  var currentDate = new Date(startDate.getTime());
+  for (var i = 0; i < numDays; i++) {
+    var dateStr = formatLocalDate(currentDate);
+    html += '<div class="timeline-cell schedule-add-target" style="width: ' + w + 'px;" data-date="' + dateStr + '"></div>';
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return html;
+}
+
+// 일(day) 헤더 셀 HTML 생성
+function generateDayHeaderHtml(startDate, numDays) {
+  var html = '';
+  var w = TL_VIEWPORT.cellWidth;
+  var currentDate = new Date(startDate.getTime());
+  for (var i = 0; i < numDays; i++) {
+    var wday = currentDate.getDay();
+    var weekendClass = '';
+    if (wday === 0) weekendClass = 'sunday';
+    else if (wday === 6) weekendClass = 'saturday';
+    html += '<div class="day-cell ' + weekendClass + '" style="width: ' + w + 'px;">' + currentDate.getDate() + '</div>';
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return html;
+}
+
+// 월(month) 헤더 셀 HTML 생성
+function generateMonthHeaderHtml(startDate, endDate) {
+  var html = '';
+  var w = TL_VIEWPORT.cellWidth;
+  var currentMonth = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  while (currentMonth <= endDate) {
+    var year = currentMonth.getFullYear();
+    var month = currentMonth.getMonth();
+    var monthStart = new Date(year, month, 1);
+    var monthEnd = new Date(year, month + 1, 0); // last day of month
+    var visibleStart = monthStart < startDate ? startDate : monthStart;
+    var visibleEnd = monthEnd > endDate ? endDate : monthEnd;
+    var visibleDays = Math.round((visibleEnd - visibleStart) / (1000 * 60 * 60 * 24)) + 1;
+    if (visibleDays > 0) {
+      var width = visibleDays * w;
+      var label = year + '년 ' + ('0' + (month + 1)).slice(-2) + '월';
+      html += '<div class="month-cell" style="width: ' + width + 'px;">' + label + '</div>';
+    }
+    currentMonth.setMonth(currentMonth.getMonth() + 1);
+  }
+  return html;
+}
+
+// 날짜 구분선(grid line) HTML 생성
+function generateGridLinesHtml(startDate, numDays, pixelOffset) {
+  var html = '';
+  var w = TL_VIEWPORT.cellWidth;
+  var currentDate = new Date(startDate.getTime());
+  for (var i = 0; i < numDays; i++) {
+    var mondayClass = currentDate.getDay() === 1 ? 'monday-line' : '';
+    var left = pixelOffset + i * w;
+    html += '<div class="date-grid-line ' + mondayClass + '" style="left: ' + left + 'px;"></div>';
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return html;
+}
+
 // 모든 타임라인 데이터 삭제 함수
   function clearAllTimelineData() {
     console.log('기존 타임라인 데이터 삭제 시작');
@@ -129,13 +209,72 @@ function parseLocalDate(dateString) {
     console.log('기존 타임라인 데이터 삭제 완료');
   }
 
+  // 카테고리 헤더 DOM 요소 생성 (XSS-safe)
+  function createCategoryHeaderElement(categoryIndex, categoryName) {
+    var $header = $('<div class="category-header">').attr('data-category-index', categoryIndex);
+    var $left = $('<div class="category-left">');
+    $left.append($('<button class="category-toggle-btn" type="button">').text('▼'));
+    $left.append($('<span class="category-title">').text(categoryName));
+    $header.append($left);
+    var $actions = $('<div class="category-actions">');
+    $actions.append($('<button class="category-btn add-event-btn" type="button" title="이벤트 추가">').text('+'));
+    $actions.append($('<button class="category-btn edit-category-btn" type="button" title="이름 변경">').text('✏'));
+    $actions.append($('<button class="category-btn color-category-btn" type="button" title="색상 변경">').text('🎨'));
+    $actions.append($('<button class="category-btn delete-category-btn" type="button" title="카테고리 삭제">').text('×'));
+    $actions.appendTo($header);
+    return $header;
+  }
+
+  // 이벤트 항목 DOM 요소 생성 (XSS-safe)
+  function createEventItemElement(categoryIndex, eventName, scheduleCount) {
+    var $item = $('<div class="project-item">').attr('data-category-index', categoryIndex);
+    var $content = $('<div class="event-content">');
+    $content.append($('<div class="project-name">').text(eventName));
+    $content.append($('<div class="project-info">').text(scheduleCount + '개 스케줄'));
+    $item.append($content);
+    var $editForm = $('<form class="event-edit-form">');
+    $editForm.append($('<textarea class="event-edit-input">').text(eventName));
+    $item.append($editForm);
+    var $actions = $('<div class="event-actions">');
+    $actions.append($('<button class="event-btn edit-event-btn" title="편집">').text('✏️'));
+    $actions.append($('<button class="event-btn delete-event-btn" title="삭제">').text('🗑️'));
+    $item.append($actions);
+    var $editActions = $('<div class="event-edit-actions">');
+    $editActions.append($('<button class="event-btn save-event-btn" title="저장">').text('✓'));
+    $editActions.append($('<button class="event-btn cancel-event-btn" title="취소">').text('✕'));
+    $item.append($editActions);
+    return $item;
+  }
+
+  // 스케줄 바 DOM 요소 생성 (XSS-safe)
+  function createScheduleBarElement(barClass, barStyle, scheduleName, startDateStr, endDateStr, scheduleIndex, issueNumber, doneRatio) {
+    var displayName = scheduleName.length > 20 ? scheduleName.substring(0, 20) + '...' : scheduleName;
+    if (doneRatio !== null && doneRatio !== undefined && doneRatio !== '') {
+      displayName += ' (' + doneRatio + '%)';
+    }
+    var titleText = scheduleName + ' (' + startDateStr + ' ~ ' + endDateStr + ')';
+
+    var $bar = $('<div>').addClass(barClass).attr({
+      'style': barStyle,
+      'title': titleText,
+      'data-schedule-index': scheduleIndex,
+      'data-issue-number': issueNumber || '',
+      'data-done-ratio': doneRatio || '',
+      'data-schedule-name': scheduleName
+    });
+    $bar.append($('<span class="project-bar-text">').text(displayName));
+    var $icon = generateIssueLinkElement(issueNumber);
+    if ($icon) $bar.append($icon);
+    return $bar;
+  }
+
   // 불러온 데이터 적용 함수
   function applyImportedData(importData) {
     console.log('불러온 데이터 적용 시작');
 
     // 컬러 정보 초기화
     categoryColors = {};
-    scheduleColors = {};    
+    scheduleColors = {};
     currentTimelineName = importData.metadata.name;
 
     // 컬러 정보 복원
@@ -156,78 +295,42 @@ function parseLocalDate(dateString) {
         });
       });
     });
-    
-    importData.categories.forEach(function(categoryData, categoryIndex) {     
-      
-      // 카테고리 추가
-      var newCategoryHtml = '<div class="category-header" data-category-index="' + categoryIndex + '">' +
-        '<div class="category-left">' +
-          '<button class="category-toggle-btn" type="button">▼</button>' +
-          '<span class="category-title">' + categoryData.name + '</span>' +
-        '</div>' +
-        '<div class="category-actions">' +
-          '<button class="category-btn add-event-btn" type="button" title="이벤트 추가">+</button>' +
-          '<button class="category-btn edit-category-btn" type="button" title="이름 변경">✏</button>' +
-          '<button class="category-btn color-category-btn" type="button" title="색상 변경">🎨</button>' +
-          '<button class="category-btn delete-category-btn" type="button" title="카테고리 삭제">×</button>' +
-        '</div>' +
-      '</div>';
-      
-              $('.sidebar-content').append(newCategoryHtml);
+
+    importData.categories.forEach(function(categoryData, categoryIndex) {
+
+      // 카테고리 추가 (XSS-safe DOM construction)
+      var $categoryHeader = createCategoryHeaderElement(categoryIndex, categoryData.name);
+      $('.sidebar-content').append($categoryHeader);
         
         // 타임라인에 카테고리 행 추가 (카테고리 행은 클릭 불가)
-        var categoryCellsHtml = '';
-        <% days.each do |day| %>
-          categoryCellsHtml += '<div class="timeline-cell" style="width: <%= cell_width %>px;"></div>';
-        <% end %>
+        var categoryCellsHtml = generateCategoryCellsHtml(TL_VIEWPORT.totalDays);
         
-        var categoryRowHtml = '<div class="timeline-row category-row" data-category-name="' + categoryData.name + '">' +
-          '<div class="timeline-grid">' + categoryCellsHtml + '</div>' +
-          '</div>';
-        
-        $('.timeline-body').append(categoryRowHtml);
+        var $categoryRow = $('<div class="timeline-row category-row">').attr('data-category-name', categoryData.name);
+        $categoryRow.append($('<div class="timeline-grid">').html(categoryCellsHtml));
+        $('.timeline-body').append($categoryRow);
         
         // 이벤트들 추가
         categoryData.events.forEach(function(eventData) {
-          // 사이드바에 이벤트 추가
-          var eventHtml = '<div class="project-item" data-category-index="' + categoryIndex + '">' +
-            '<div class="event-content">' +
-              '<div class="project-name">' + eventData.name.replace(/\n/g, '<br>') + '</div>' +
-              '<div class="project-info">' + eventData.schedules.length + '개 스케줄</div>' +
-            '</div>' +
-            '<form class="event-edit-form">' +
-              '<textarea class="event-edit-input">' + eventData.name + '</textarea>' +
-            '</form>' +
-            '<div class="event-actions">' +
-              '<button class="event-btn edit-event-btn" title="편집">✏️</button>' +
-              '<button class="event-btn delete-event-btn" title="삭제">🗑️</button>' +
-            '</div>' +
-            '<div class="event-edit-actions">' +
-              '<button class="event-btn save-event-btn" title="저장">✓</button>' +
-              '<button class="event-btn cancel-event-btn" title="취소">✕</button>' +
-            '</div>' +
-          '</div>';
-          
-          $('.sidebar-content').append(eventHtml);
+          // 사이드바에 이벤트 추가 (XSS-safe DOM construction)
+          var $eventItem = createEventItemElement(categoryIndex, eventData.name, eventData.schedules.length);
+          $('.sidebar-content').append($eventItem);
         
           // 타임라인에 이벤트 행 추가 (이벤트 행은 클릭 가능)
-          var eventCellsHtml = '';
-          <% days.each_with_index do |day, index| %>
-            eventCellsHtml += '<div class="timeline-cell schedule-add-target" style="width: <%= cell_width %>px;" data-date="<%= day[:date].strftime('%Y-%m-%d') %>"></div>';
-          <% end %>
+          var eventCellsHtml = generateEventCellsHtml(TL_VIEWPORT.originDate, TL_VIEWPORT.totalDays);
           
-          var eventRowHtml = '<div class="timeline-row" data-event-name="' + eventData.name + '" data-category-name="' + categoryData.name + '">' +
-            '<div class="timeline-grid">' + eventCellsHtml + '</div>' +
-            '</div>';
-        
-        $('.timeline-body').append(eventRowHtml);
+          var $eventRow = $('<div class="timeline-row">').attr({
+            'data-event-name': eventData.name,
+            'data-category-name': categoryData.name
+          });
+          $eventRow.append($('<div class="timeline-grid">').html(eventCellsHtml));
+          $('.timeline-body').append($eventRow);
         
         var timelineRow = $('.timeline-row').last();
         
         // 스케줄들 추가
         eventData.schedules.forEach(function(scheduleData, scheduleIndex) {
           if (scheduleData.startDate && scheduleData.endDate) {
-            var startDate = new Date(<%= start_date.to_time.to_i * 1000 %>);
+            var startDate = new Date(TL_VIEWPORT.originDate.getTime());
             var scheduleStartDate = parseLocalDate(scheduleData.startDate);
             var scheduleEndDate = parseLocalDate(scheduleData.endDate);
             
@@ -235,40 +338,28 @@ function parseLocalDate(dateString) {
             var projectDurationDays = Math.round((scheduleEndDate - scheduleStartDate) / (1000 * 60 * 60 * 24));
             var barLeft = projectStartDays * <%= cell_width %>;
             var barWidth = projectDurationDays * <%= cell_width %>;
-            var totalWidth = <%= total_width %>;
-            
-            // 표시 범위 내에 있는 경우만 바 생성
-            if (barLeft >= -barWidth && barLeft <= totalWidth) {
-              // 색상 확인 (개별 색상 > 카테고리 색상)
-              var scheduleKey = eventData.name + '_' + scheduleIndex;
-              var scheduleColor = scheduleData.customColor || scheduleColors[scheduleKey];
-              var categoryColor = getCategoryColor(categoryData.name);
-              var appliedColor = scheduleColor || categoryColor;
-              
-              var barClass = appliedColor ? 'project-bar custom-color' : 'project-bar issue-' + scheduleData.issue;
-              var barStyle = 'position: absolute; top: 2px; left: ' + Math.max(0, barLeft) + 'px; width: ' + Math.min(barWidth, totalWidth - Math.max(0, barLeft)) + 'px; z-index: ' + (101 + scheduleIndex) + ';';
-              
-              if (appliedColor) {
-                barStyle += ' background-color: ' + appliedColor + ';';
-              }
-              
-              // 이슈 링크 아이콘 HTML (공통 함수 사용)
-              var issueLinkIcon = generateIssueLinkIcon(scheduleData.issue);
-              
-              var scheduleBarHtml = '<div class="' + barClass + '" ' +
-                'style="' + barStyle + '" ' +
-                'title="' + scheduleData.name + ' (' + scheduleData.startDate + ' ~ ' + scheduleData.endDate + ')" ' +
-                'data-schedule-index="' + scheduleIndex + '" ' +
-                'data-issue-number="' + scheduleData.issue + '" ' +
-                'data-done-ratio="' + (scheduleData.doneRatio || '') + '">' +
-                '<span class="project-bar-text">' + (scheduleData.name.length > 20 ? scheduleData.name.substring(0, 20) + '...' : scheduleData.name).replace(/\n/g, '<br>') + '</span>' +
-                issueLinkIcon +
-                '</div>';
-              
-              timelineRow.append(scheduleBarHtml);
-              // 원문 스케줄명을 데이터 속성으로 보존
-              timelineRow.find('.project-bar').last().attr('data-schedule-name', scheduleData.name);
+
+            // 색상 확인 (개별 색상 > 카테고리 색상)
+            var scheduleKey = eventData.name + '_' + scheduleIndex;
+            var scheduleColor = scheduleData.customColor || scheduleColors[scheduleKey];
+            var categoryColor = getCategoryColor(categoryData.name);
+            var appliedColor = scheduleColor || categoryColor;
+
+            var barClass = appliedColor ? 'project-bar custom-color' : 'project-bar issue-' + scheduleData.issue;
+            var barStyle = 'position: absolute; top: 2px; left: ' + barLeft + 'px; width: ' + barWidth + 'px; z-index: ' + (101 + scheduleIndex) + ';';
+
+            if (appliedColor) {
+              barStyle += ' background-color: ' + appliedColor + ';';
             }
+
+            // 스케줄 바 생성 (XSS-safe DOM construction)
+            var $scheduleBar = createScheduleBarElement(
+              barClass, barStyle,
+              scheduleData.name,
+              scheduleData.startDate, scheduleData.endDate,
+              scheduleIndex, scheduleData.issue, scheduleData.doneRatio
+            );
+            timelineRow.append($scheduleBar);
           }
         });
       });
@@ -289,15 +380,26 @@ function parseLocalDate(dateString) {
     console.log('불러온 데이터 적용 완료');
   }
 
-  // 이슈 링크 아이콘 HTML 생성 함수 (공통)
+  // 이슈 링크 아이콘 HTML 생성 함수 (하위 호환용 - 레거시 코드에서 사용)
   function generateIssueLinkIcon(issueNumber) {
-    if (!issueNumber || issueNumber.trim() === '') {
+    if (!issueNumber || String(issueNumber).trim() === '') {
       return '';
     }
-    
-    return '<a href="/issues/' + issueNumber + '" class="issue-link-icon" target="_blank" title="" data-issue-tooltip="' + issueNumber + '">' +
-      '<span class="issue-link-symbol">🔗</span>' +
-      '</a>';
+    var $el = generateIssueLinkElement(issueNumber);
+    return $el ? $el.prop('outerHTML') : '';
+  }
+
+  // 이슈 링크 아이콘 DOM 요소 생성 (XSS-safe)
+  function generateIssueLinkElement(issueNumber) {
+    if (!issueNumber || String(issueNumber).trim() === '') {
+      return null;
+    }
+    var $link = $('<a class="issue-link-icon" target="_blank">').attr({
+      'href': '/issues/' + encodeURIComponent(issueNumber),
+      'data-issue-tooltip': issueNumber
+    });
+    $link.append($('<span class="issue-link-symbol">').text('🔗'));
+    return $link;
   }
 
   // 기존 스케쥴바들에 이슈 링크 아이콘 추가하는 함수
@@ -533,12 +635,11 @@ function parseLocalDate(dateString) {
       dragStartData.isDragging = true;
       dragStartData.eventItem.addClass('dragging');
       
-      // 드래그 헬퍼 생성
-      dragHelper = $('<div class="project-item drag-helper">' + 
-                     '<div class="event-content">' +
-                     '<div class="project-name">' + dragStartData.eventName + '</div>' +
-                     '</div>' +
-                     '</div>');
+      // 드래그 헬퍼 생성 (XSS-safe)
+      dragHelper = $('<div class="project-item drag-helper">');
+      var $helperContent = $('<div class="event-content">');
+      $helperContent.append($('<div class="project-name">').text(dragStartData.eventName));
+      dragHelper.append($helperContent);
       
       $('body').append(dragHelper);
       updateDragPosition(e);
@@ -903,12 +1004,11 @@ function parseLocalDate(dateString) {
       categoryDragData.isDragging = true;
       categoryDragData.categoryHeader.addClass('dragging');
       
-      // 드래그 헬퍼 생성
-      categoryDragHelper = $('<div class="category-header drag-helper">' + 
-                            '<div class="category-left">' +
-                            '<span class="category-title">' + categoryDragData.categoryName + '</span>' +
-                            '</div>' +
-                            '</div>');
+      // 드래그 헬퍼 생성 (XSS-safe)
+      categoryDragHelper = $('<div class="category-header drag-helper">');
+      var $catLeft = $('<div class="category-left">');
+      $catLeft.append($('<span class="category-title">').text(categoryDragData.categoryName));
+      categoryDragHelper.append($catLeft);
       
       $('body').append(categoryDragHelper);
       updateCategoryDragPosition(e);
@@ -1117,7 +1217,7 @@ function parseLocalDate(dateString) {
   function updateScheduleBar(scheduleBar, scheduleData) {
     var startDate = new Date(scheduleData.start_date);
     var endDate = new Date(scheduleData.end_date);
-    var startDateObj = new Date(<%= start_date.to_time.to_i * 1000 %>);
+    var startDateObj = new Date(TL_VIEWPORT.originDate.getTime());
     
     // 위치 계산 - 다른 함수들과 동일한 방식 사용
     var startDayIndex = Math.round((startDate - startDateObj) / (1000 * 60 * 60 * 24));
@@ -1155,10 +1255,11 @@ function parseLocalDate(dateString) {
       width: width + 'px'
     });
     
-    // 텍스트와 title 업데이트
-    scheduleBar.find('.project-bar-text').html(scheduleData.name.replace(/\n/g, '<br>'));
-    scheduleBar.attr('title', scheduleData.name + ' (' + 
-      formatLocalDate(startDate) + ' ~ ' + 
+    // 텍스트와 title 업데이트 (XSS-safe)
+    var displayName = scheduleData.name.length > 20 ? scheduleData.name.substring(0, 20) + '...' : scheduleData.name;
+    scheduleBar.find('.project-bar-text').text(displayName);
+    scheduleBar.attr('title', scheduleData.name + ' (' +
+      formatLocalDate(startDate) + ' ~ ' +
       formatLocalDate(endDate) + ')');
     // 원문 스케줄명 속성 갱신
     scheduleBar.attr('data-schedule-name', scheduleData.name);

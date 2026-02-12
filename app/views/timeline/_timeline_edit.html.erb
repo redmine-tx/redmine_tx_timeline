@@ -3,7 +3,7 @@
 // 새 카테고리 추가 함수
   function addNewCategory(categoryName) {
     console.log('새 카테고리 추가:', categoryName);
-    
+
     // 새 카테고리 인덱스 계산
     var maxIndex = -1;
     $('.category-header').each(function() {
@@ -12,34 +12,17 @@
     });
     var newCategoryIndex = maxIndex + 1;
     categoryColors[categoryName] = '#6c757d';
-    
-    // 사이드바에 새 카테고리 헤더 추가
-    var newCategoryHtml = '<div class="category-header" data-category-index="' + newCategoryIndex + '">' +
-      '<div class="category-left">' +
-        '<button class="category-toggle-btn" type="button">▼</button>' +
-        '<span class="category-title">' + categoryName + '</span>' +
-      '</div>' +
-      '<div class="category-actions">' +
-        '<button class="category-btn add-event-btn" type="button" title="이벤트 추가">+</button>' +
-        '<button class="category-btn edit-category-btn" type="button" title="이름 변경">✏</button>' +
-        '<button class="category-btn color-category-btn" type="button" title="색상 변경">🎨</button>' +
-        '<button class="category-btn delete-category-btn" type="button" title="카테고리 삭제">×</button>' +
-      '</div>' +
-          '</div>';
-      
-      $('.sidebar-content').append(newCategoryHtml);
+
+    // 사이드바에 새 카테고리 헤더 추가 (XSS-safe DOM construction)
+    var $categoryHeader = createCategoryHeaderElement(newCategoryIndex, categoryName);
+    $('.sidebar-content').append($categoryHeader);
     
     // 타임라인에 새 카테고리 행 추가
-    var cellsHtml = '';
-    <% days.each do |day| %>
-      cellsHtml += '<div class="timeline-cell" style="width: <%= cell_width %>px;"></div>';
-    <% end %>
+    var cellsHtml = generateCategoryCellsHtml(TL_VIEWPORT.totalDays);
     
-    var newTimelineRowHtml = '<div class="timeline-row category-row" data-category-name="' + categoryName + '">' +
-      '<div class="timeline-grid">' + cellsHtml + '</div>' +
-      '</div>';
-    
-    $('.timeline-body').append(newTimelineRowHtml);
+    var $newRow = $('<div class="timeline-row category-row">').attr('data-category-name', categoryName);
+    $newRow.append($('<div class="timeline-grid">').html(cellsHtml));
+    $('.timeline-body').append($newRow);
     
     // 라인 높이 업데이트
     setTimeout(function() {
@@ -59,23 +42,9 @@
     var categoryProjects = $('.project-item[data-category-index="' + categoryIndex + '"]');
     var categoryHeader = $('.category-header[data-category-index="' + categoryIndex + '"]');
     
-    var newProjectHtml = '<div class="project-item" data-category-index="' + categoryIndex + '">' +
-      '<div class="event-content">' +
-        '<div class="project-name">' + eventData.name.replace(/\n/g, '<br>') + '</div>' +
-        '<div class="project-info">0개 이벤트</div>' +
-      '</div>' +
-      '<form class="event-edit-form">' +
-        '<textarea class="event-edit-input">' + eventData.name + '</textarea>' +
-      '</form>' +
-      '<div class="event-actions">' +
-        '<button class="event-btn edit-event-btn" title="편집">✏️</button>' +
-        '<button class="event-btn delete-event-btn" title="삭제">🗑️</button>' +
-      '</div>' +
-      '<div class="event-edit-actions">' +
-        '<button class="event-btn save-event-btn" title="저장">✓</button>' +
-        '<button class="event-btn cancel-event-btn" title="취소">✕</button>' +
-      '</div>' +
-    '</div>';
+    // XSS-safe DOM construction
+    var $newProject = createEventItemElement(categoryIndex, eventData.name, 0);
+    var newProjectHtml = $newProject.prop('outerHTML');
     
     var newProjectElement;
     if (categoryProjects.length > 0) {
@@ -89,16 +58,16 @@
     }
     
     // 2. 타임라인에 해당 행만 추가 (기존 행들은 건드리지 않음)
-    var cellsHtml = '';
-    <% days.each_with_index do |day, index| %>
-      cellsHtml += '<div class="timeline-cell schedule-add-target" style="width: <%= cell_width %>px;" data-date="<%= day[:date].strftime('%Y-%m-%d') %>"></div>';
-    <% end %>
+    var cellsHtml = generateEventCellsHtml(TL_VIEWPORT.originDate, TL_VIEWPORT.totalDays);
     
     var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
     
-    var newTimelineRowHtml = '<div class="timeline-row" data-event-name="' + eventData.name + '" data-category-name="' + categoryName + '">' +
-      '<div class="timeline-grid">' + cellsHtml + '</div>' +
-      '</div>';
+    var $newTimelineRow = $('<div class="timeline-row">').attr({
+      'data-event-name': eventData.name,
+      'data-category-name': categoryName
+    });
+    $newTimelineRow.append($('<div class="timeline-grid">').html(cellsHtml));
+    var newTimelineRowHtml = $newTimelineRow.prop('outerHTML');
     
     // 타임라인에서 올바른 위치 찾기
     var timelineInsertPosition = findTimelineInsertPosition(categoryIndex, newProjectElement);

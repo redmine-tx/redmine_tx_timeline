@@ -23,39 +23,41 @@ class TimelineController < ApplicationController
 
   def save_timeline_data
     begin
-      name = params[:name] || "Default"
-      data = JSON.parse(params[:timeline_data])
+      name = (params[:name] || "Default").to_s.strip.truncate(255)
+      data = JSON.parse(params[:timeline_data].to_s)
 
       unless data['categories'].is_a?(Array)
         raise ArgumentError, 'Invalid data format: categories must be an array'
       end
 
-      timeline_data = TimelineData.find_or_initialize_by(
-        project_id: @project.id,
-        name: name,
-        is_active: true
-      )
+      TimelineData.transaction do
+        timeline_data = TimelineData.lock.find_or_initialize_by(
+          project_id: @project.id,
+          name: name,
+          is_active: true
+        )
 
-      timeline_data.assign_attributes(
-        name: name,
-        data: data.to_json,
-        is_active: true
-      )
+        timeline_data.assign_attributes(
+          name: name,
+          data: data.to_json,
+          is_active: true
+        )
 
-      if timeline_data.save
-        render json: {
-          success: true,
-          message: timeline_data.persisted? ? '타임라인 데이터가 성공적으로 업데이트되었습니다.' : '타임라인 데이터가 성공적으로 생성되었습니다.',
-          timeline_id: timeline_data.id,
-          updated_at: timeline_data.updated_at,
-          is_new_record: timeline_data.previously_new_record?
-        }
-      else
-        render json: {
-          success: false,
-          message: '저장에 실패했습니다.',
-          errors: timeline_data.errors.full_messages
-        }, status: :unprocessable_entity
+        if timeline_data.save
+          render json: {
+            success: true,
+            message: timeline_data.persisted? ? '타임라인 데이터가 성공적으로 업데이트되었습니다.' : '타임라인 데이터가 성공적으로 생성되었습니다.',
+            timeline_id: timeline_data.id,
+            updated_at: timeline_data.updated_at,
+            is_new_record: timeline_data.previously_new_record?
+          }
+        else
+          render json: {
+            success: false,
+            message: '저장에 실패했습니다.',
+            errors: timeline_data.errors.full_messages
+          }, status: :unprocessable_entity
+        end
       end
 
     rescue JSON::ParserError => e
@@ -155,13 +157,32 @@ class TimelineController < ApplicationController
   end
 
   def authorize
-    unless User.current.allowed_to?(:view_timeline, @project)
+    permission = case action_name
+                 when 'save_timeline_data', 'create_timeline'
+                   :edit_timeline
+                 else
+                   :view_timeline
+                 end
+    unless User.current.allowed_to?(permission, @project)
       deny_access
     end
   end
 
   def format_timeline_categories(timeline_data)
     return [] unless timeline_data&.categories&.any?
+
+    # Batch load all issue IDs to avoid N+1 queries
+    issue_ids = timeline_data.categories.flat_map do |category|
+      (category['events'] || []).flat_map do |event|
+        (event['schedules'] || []).map { |s| s['issue'] }.compact.select(&:present?)
+      end
+    end.uniq
+
+    done_ratios = if issue_ids.any?
+                    Issue.where(id: issue_ids).pluck(:id, :done_ratio).to_h
+                  else
+                    {}
+                  end
 
     timeline_data.categories.map.with_index do |category, index|
       {
@@ -172,7 +193,7 @@ class TimelineController < ApplicationController
           {
             name: event['name'] || '이름 없음',
             schedules: (event['schedules'] || []).map do |schedule|
-              format_schedule(schedule)
+              format_schedule(schedule, done_ratios)
             end.compact
           }
         end.compact
@@ -180,31 +201,19 @@ class TimelineController < ApplicationController
     end.compact
   end
 
-  def format_schedule(schedule)
+  def format_schedule(schedule, done_ratios = {})
     begin
-      start_date = nil
-      end_date = nil
+      start_date = Date.parse(schedule['startDate']) rescue nil if schedule['startDate'].present?
+      end_date = Date.parse(schedule['endDate']) rescue nil if schedule['endDate'].present?
 
-      if schedule['startDate'].present?
-        start_date = Date.parse(schedule['startDate']) rescue nil
-      end
-
-      if schedule['endDate'].present?
-        end_date = Date.parse(schedule['endDate']) rescue nil
-      end
-
-      done_ratio = if schedule['issue'].present?
-                    issue = Issue.where(id: schedule['issue']).first
-                    issue.present? ? issue.done_ratio : nil
-                  else
-                    nil
-                  end
+      issue_id = schedule['issue']
+      done_ratio = issue_id.present? ? done_ratios[issue_id.to_i] : nil
 
       {
         name: schedule['name'] || '일정 없음',
         startDate: start_date&.strftime('%Y-%m-%d'),
         endDate: end_date&.strftime('%Y-%m-%d'),
-        issue: schedule['issue'] || '',
+        issue: issue_id || '',
         done_ratio: done_ratio,
         customColor: schedule['customColor']
       }

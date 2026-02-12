@@ -173,25 +173,80 @@ today_position = (Date.today - start_date).to_i * cell_width
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
 <script>
-// 전역 변수들
-var categoryColors = {};                        // 카테고리 색상 정보 초기화 (색상 변경 기능을 위해)
-var scheduleColors = {};                        // 스케줄별 커스텀 색상 저장 객체
-var cellWidth = <%= cell_width %>;              // 셀 너비
-var currentTimelineName = 'Default';             // 현재 타임라인 이름
+// 타임라인 상수
+var TL_CONST = Object.freeze({
+  CELL_WIDTH: <%= cell_width %>,
+  DRAG_THRESHOLD: 5,
+  DEFAULT_COLOR: '#6c757d',
+  SCROLL_SYNC_DELAY: 5,
+  SCROLL_DEBOUNCE: 2,
+  LAYOUT_DELAY: 50,
+  LAYOUT_DELAY_LONG: 100,
+  INIT_DELAY: 200,
+  Z_INDEX: Object.freeze({
+    HEADER: 10,
+    SIDEBAR_HEADER: 11,
+    GRID: 50,
+    PROJECT_BAR: 200,
+    TIMELINE_ROW: 300,
+    TODAY_LINE: 555,
+    DRAG_HELPER: 1001,
+    POPUP_OVERLAY: 1002,
+    POPUP_EDIT: 1003,
+    COLOR_PICKER: 1004,
+    BAR_HOVER: 9999,
+    BAR_DRAGGING: 10000
+  })
+});
 
-// 이벤트 핸들러 관련 전역 변수
-var currentEditingCategory = null;              // 현재 편집 중인 카테고리 정보 저장
-var currentEditingSchedule = null;              // 현재 편집 중인 스케줄 정보 저장
-var currentEditingScheduleBar = null;           // 현재 편집 중인 스케줄 바 정보 저장 (우클릭 편집용)
-var currentColorEditingTarget = null;           // 현재 색상 변경 중인 대상 정보 저장
-var selectedColor = '#6c757d';                  // 현재 선택된 색상
-var dragThreshold = 5;                          // 드래그 감지를 위한 변수 (5px 이상 움직이면 드래그로 간주)
-var deletingCategoryIndex = null;               // 삭제 중인 카테고리 인덱스
+// 타임라인 상태 (모듈 패턴)
+var TL_STATE = {
+  colors: {
+    category: {},
+    schedule: {}
+  },
+  currentTimelineName: 'Default',
+  editing: {
+    category: null,
+    schedule: null,
+    scheduleBar: null,
+    colorTarget: null,
+    selectedColor: TL_CONST.DEFAULT_COLOR,
+    deletingCategoryIndex: null
+  },
+  scroll: {
+    isSyncing: false,
+    animationFrame: null,
+    lastSyncTime: 0
+  }
+};
 
-// 스크롤 동기화 관련 변수
-var isScrollSyncing = false;                    // 무한 루프 방지 플래그
-var syncAnimationFrame = null;                  // 애니메이션 프레임 ID
-var lastSyncTime = 0;                           // 마지막 동기화 시간
+// 타임라인 뷰포트 상태 (동적으로 확장 가능)
+var TL_VIEWPORT = {
+  originDate: new Date(<%= start_date.to_time.to_i * 1000 %>),
+  endDate: new Date(<%= end_date.to_time.to_i * 1000 %>),
+  totalDays: <%= days.length %>,
+  totalWidth: <%= total_width %>,
+  cellWidth: <%= cell_width %>,
+  isLoading: false,
+  isDraggingHeader: false
+};
+
+// 하위 호환용 전역 변수 (기존 코드에서 직접 참조하는 것들)
+var categoryColors = TL_STATE.colors.category;
+var scheduleColors = TL_STATE.colors.schedule;
+var cellWidth = TL_CONST.CELL_WIDTH;
+var currentTimelineName = TL_STATE.currentTimelineName;
+var currentEditingCategory = null;
+var currentEditingSchedule = null;
+var currentEditingScheduleBar = null;
+var currentColorEditingTarget = null;
+var selectedColor = TL_CONST.DEFAULT_COLOR;
+var dragThreshold = TL_CONST.DRAG_THRESHOLD;
+var deletingCategoryIndex = null;
+var isScrollSyncing = false;
+var syncAnimationFrame = null;
+var lastSyncTime = 0;
 </script>
 
 <%= render partial: 'timeline/timeline_lib', locals: { days: days, cell_width: cell_width, start_date: start_date, total_width: total_width } %>
@@ -203,51 +258,139 @@ var lastSyncTime = 0;                           // 마지막 동기화 시간
 <% 
   # 전체 데이터를 JavaScript로 전달
 %>
-window.initialTimelineData = <%= raw all_timelines_data.to_json %>;
+window.initialTimelineData = <%= json_escape(all_timelines_data.to_json).html_safe %>;
 
 // 스크롤 동기화 기능 초기화 함수
 function initializeScrollSync() {
-  // 스크롤 동기화 함수
-  function syncScroll(sourceElement, targetElement, scrollTop) {
-    if (syncAnimationFrame) {
-      cancelAnimationFrame(syncAnimationFrame);
+  var $sidebar = $('.sidebar-content');
+  var $timeline = $('.timeline-body');
+
+  // 수평 스크롤바로 인한 높이 차이를 보정하여 스크롤 범위를 일치시킴
+  function equalizeScrollRanges() {
+    // 기존 보정값 초기화
+    $sidebar.css('padding-bottom', '');
+
+    var sidebarHeight = $sidebar[0].clientHeight;
+    var timelineHeight = $timeline[0].clientHeight;
+    var heightDiff = sidebarHeight - timelineHeight;
+
+    // 사이드바가 더 높으면 (수평 스크롤바가 타임라인 공간을 차지한 경우)
+    // 사이드바에 padding-bottom을 추가하여 동일한 maxScrollTop 유지
+    if (heightDiff > 0) {
+      $sidebar.css('padding-bottom', heightDiff + 'px');
     }
-    
-    syncAnimationFrame = requestAnimationFrame(function() {
-      if (!isScrollSyncing) {
-        isScrollSyncing = true;
-        lastSyncTime = Date.now();
-        
-        // 타겟 요소의 스크롤 위치 설정
-        targetElement.scrollTop(scrollTop);
-        
-        // 더 짧은 딜레이로 플래그 해제
-        setTimeout(function() {
-          isScrollSyncing = false;
-        }, 5);
-      }
-      syncAnimationFrame = null;
-    });
   }
-  
-  // 사이드바와 타임라인 스크롤 동기화
-  $('.sidebar-content').on('scroll', function() {
-    var currentTime = Date.now();
-    // 너무 빠른 연속 이벤트는 마지막 것만 처리
-    if (currentTime - lastSyncTime > 2) {
-      var scrollTop = $(this).scrollTop();
-      syncScroll($(this), $('.timeline-body'), scrollTop);
+
+  equalizeScrollRanges();
+  $(window).on('resize', equalizeScrollRanges);
+
+  // 동기식 스크롤 동기화 - requestAnimationFrame 없이 즉시 반영
+  // scrollTop 대입이 상대쪽 scroll 이벤트를 동기적으로 발생시키므로
+  // isSyncing 플래그만으로 피드백 루프를 차단할 수 있음
+  var isSyncing = false;
+
+  $sidebar.on('scroll', function() {
+    if (isSyncing) return;
+    isSyncing = true;
+    $timeline[0].scrollTop = this.scrollTop;
+    isSyncing = false;
+  });
+
+  $timeline.on('scroll', function() {
+    if (isSyncing) return;
+    isSyncing = true;
+    $sidebar[0].scrollTop = this.scrollTop;
+    isSyncing = false;
+  });
+}
+
+// ============================================================
+// 타임라인 좌측 무한 스크롤 - 과거 날짜 동적 로드
+// ============================================================
+
+function prependTimelineDays(monthsToAdd) {
+  if (TL_VIEWPORT.isLoading) return;
+  TL_VIEWPORT.isLoading = true;
+
+  var $main = $('.timeline-main');
+  // ★ DOM 변경 전에 scrollLeft 저장 (브라우저가 reflow로 값을 변경하기 전)
+  var savedScrollLeft = $main[0].scrollLeft;
+
+  var oldOrigin = new Date(TL_VIEWPORT.originDate.getTime());
+  var newOrigin = new Date(oldOrigin);
+  newOrigin.setMonth(newOrigin.getMonth() - monthsToAdd);
+  newOrigin.setDate(1); // 월 시작일로 정규화
+
+  // 추가되는 일수/너비 계산
+  var addedDays = Math.round((oldOrigin - newOrigin) / (1000 * 60 * 60 * 24));
+  var addedWidth = addedDays * TL_VIEWPORT.cellWidth;
+
+  console.log('prependTimelineDays: ' + monthsToAdd + '개월 (' + addedDays + '일, ' + addedWidth + 'px) 추가, savedScrollLeft=' + savedScrollLeft);
+
+  // 1. timeline-main-inner 너비를 먼저 업데이트 (컨테이너 확장)
+  var newTotalWidth = TL_VIEWPORT.totalWidth + addedWidth;
+  $('.timeline-main-inner').css('width', newTotalWidth + 'px');
+
+  // 2. 일(day) 헤더 앞에 추가
+  var newDayHeaderHtml = generateDayHeaderHtml(newOrigin, addedDays);
+  $('.day-header').prepend(newDayHeaderHtml);
+
+  // 3. 월(month) 헤더 앞에 추가
+  var oldOriginPrevDay = new Date(oldOrigin.getTime() - 86400000);
+  var newMonthHeaderHtml = generateMonthHeaderHtml(newOrigin, oldOriginPrevDay);
+  $('.month-header').prepend(newMonthHeaderHtml);
+
+  // 4. 기존 날짜 구분선을 오른쪽으로 이동 + 새 구분선 추가
+  $('.date-grid-line').each(function() {
+    var currentLeft = parseInt($(this).css('left')) || 0;
+    $(this).css('left', (currentLeft + addedWidth) + 'px');
+  });
+  var newGridLinesHtml = generateGridLinesHtml(newOrigin, addedDays, 0);
+  $('.date-grid-lines').prepend(newGridLinesHtml);
+
+  // 5. 모든 타임라인 행에 셀 앞에 추가
+  var newCategoryCellsHtml = generateCategoryCellsHtml(addedDays);
+  var newEventCellsHtml = generateEventCellsHtml(newOrigin, addedDays);
+  $('.timeline-row').each(function() {
+    var $row = $(this);
+    var $grid = $row.find('.timeline-grid');
+    if ($row.hasClass('category-row')) {
+      $grid.prepend(newCategoryCellsHtml);
+    } else {
+      $grid.prepend(newEventCellsHtml);
     }
   });
-  
-  $('.timeline-body').on('scroll', function() {
-    var currentTime = Date.now();
-    // 너무 빠른 연속 이벤트는 마지막 것만 처리
-    if (currentTime - lastSyncTime > 2) {
-      var scrollTop = $(this).scrollTop();
-      syncScroll($(this), $('.sidebar-content'), scrollTop);
-    }
+
+  // 6. 기존 프로젝트 바 위치를 오른쪽으로 이동
+  $('.project-bar').each(function() {
+    var currentLeft = parseInt($(this).css('left')) || 0;
+    $(this).css('left', (currentLeft + addedWidth) + 'px');
   });
+
+  // 7. 오늘 표시선 위치를 오른쪽으로 이동
+  var $todayLine = $('.today-line');
+  if ($todayLine.length > 0) {
+    var todayLeft = parseInt($todayLine.css('left')) || 0;
+    $todayLine.css('left', (todayLeft + addedWidth) + 'px');
+  }
+
+  // 8. scrollLeft 보정 (DOM 변경 전에 저장한 값 + 추가된 너비)
+  var targetScrollLeft = savedScrollLeft + addedWidth;
+  $main[0].scrollLeft = targetScrollLeft;
+
+  // 9. TL_VIEWPORT 상태 업데이트
+  TL_VIEWPORT.originDate = newOrigin;
+  TL_VIEWPORT.totalDays += addedDays;
+  TL_VIEWPORT.totalWidth = newTotalWidth;
+
+  // 그리드 라인 높이 업데이트
+  updateLineHeight();
+
+  // ★ isLoading 해제를 약간 지연시켜 scroll 이벤트 재진입 방지
+  setTimeout(function() {
+    TL_VIEWPORT.isLoading = false;
+  }, 50);
+  console.log('타임라인 확장 완료: 새 시작일=' + formatLocalDate(newOrigin) + ', targetScrollLeft=' + targetScrollLeft);
 }
 
 // 이벤트 핸들러 등록 함수
@@ -532,7 +675,51 @@ $(document).ready(function() {
 
   // 스크롤 동기화 기능 초기화
   initializeScrollSync();
-  
+
+  // 날짜 헤더 드래그 스크롤 (delta 기반 - prepend 후에도 안정적)
+  (function() {
+    var isDragging = false;
+    var lastX = 0;
+    var $header = $('.timeline-header');
+    var $main = $('.timeline-main');
+
+    $header.on('mousedown', function(e) {
+      isDragging = true;
+      lastX = e.pageX;
+      TL_VIEWPORT.isDraggingHeader = true;
+      $header.addClass('dragging');
+      e.preventDefault();
+    });
+
+    $(document).on('mousemove', function(e) {
+      if (!isDragging) return;
+      var deltaX = lastX - e.pageX;
+      lastX = e.pageX;
+      $main[0].scrollLeft += deltaX;
+    });
+
+    $(document).on('mouseup', function() {
+      if (isDragging) {
+        isDragging = false;
+        TL_VIEWPORT.isDraggingHeader = false;
+        $header.removeClass('dragging');
+      }
+    });
+  })();
+
+  // 좌측 무한 스크롤: 좌측 끝 접근 시 과거 날짜 자동 로드
+  (function() {
+    var $main = $('.timeline-main');
+    var scrollCooldown = false;
+    $main.on('scroll', function() {
+      if (this.scrollLeft < 100 && !TL_VIEWPORT.isLoading && !scrollCooldown) {
+        scrollCooldown = true;
+        prependTimelineDays(3);
+        setTimeout(function() { scrollCooldown = false; }, 1000);
+      }
+    });
+  })();
+
   // 이벤트 핸들러 등록
   registerEventHandlers();
 
@@ -868,34 +1055,7 @@ $(document).ready(function() {
     }
   });
 
-  // 카테고리 편집 버튼 클릭 이벤트 (인라인 편집 모드로 변경)
-  $(document).on('click', '.edit-category-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    var categoryHeader = $(this).closest('.category-header');
-    enterEditMode(categoryHeader);
-  });
-
-  // 카테고리 편집 저장 버튼 클릭 이벤트
-  $(document).on('click', '.save-category-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-
-    
-    var categoryHeader = $(this).closest('.category-header');
-    saveCategory(categoryHeader);
-  });
-
-  // 카테고리 편집 취소 버튼 클릭 이벤트
-  $(document).on('click', '.cancel-category-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-
-    
-    var categoryHeader = $(this).closest('.category-header');
-    cancelEditMode(categoryHeader);
-  });
+  // (카테고리 편집/저장/취소 이벤트 핸들러는 registerEventHandlers()에서 등록됨)
 
   // 이벤트 편집 버튼 클릭 이벤트
   $(document).on('click', '.edit-event-btn', function(e) {
@@ -941,57 +1101,10 @@ $(document).ready(function() {
     cancelEventEditMode(eventItem);
   });
 
-  // 카테고리 색상 변경 버튼 클릭 이벤트
-  $(document).on('click', '.color-category-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    console.log('카테고리 색상 변경 버튼 클릭됨');
-    
-    var categoryHeader = $(this).closest('.category-header');
-    var categoryIndex = categoryHeader.data('category-index');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
-    
-    // 현재 색상 변경 중인 대상 정보 저장
-    currentColorEditingTarget = {
-      type: 'category',
-      categoryName: categoryName,
-      categoryIndex: categoryIndex,
-      categoryHeader: categoryHeader
-    };
-    
-    // 팝업 타이틀과 대상 이름 설정
-    $('#colorPickerTitle').text('카테고리 색상 선택');
-    $('#colorPickerTargetName').text(categoryName);
-    
-    // 현재 카테고리의 색상 불러오기
-    var currentColor = categoryColors[categoryName] || '#6c757d';
-    selectedColor = currentColor;
-    
-    // 색상 선택 UI 업데이트
-    updateColorSelection(currentColor);
-    
-    // 팝업 표시
-    $('#colorPickerPopup').addClass('show');
-  });
+  // (카테고리 색상 변경 이벤트 핸들러는 registerEventHandlers()에서 등록됨)
 
-  // 카테고리 편집 입력 필드에서 Enter/Escape 키 처리
-  $(document).on('keydown', '.category-edit-input', function(e) {
-    var categoryHeader = $(this).closest('.category-header');
-    
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      saveCategory(categoryHeader);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      cancelEditMode(categoryHeader);
-    }
-  });
-
-  // 이벤트 드래그 앤 드롭 기능 초기화
-  initializeEventDragAndDrop();
-  
-  // 카테고리 드래그 앤 드롭 기능 초기화
-  initializeCategoryDragAndDrop();
+  // (카테고리 편집 입력 필드 키 처리는 registerEventHandlers()에서 등록됨)
+  // (드래그 앤 드롭은 document.ready 초기화 블록에서 이미 초기화됨)
 
   // 이벤트 편집 입력 필드에서 Enter/Escape 키 처리
   $(document).on('keydown', '.event-edit-input', function(e) {
@@ -1072,78 +1185,7 @@ $(document).ready(function() {
     categoryTitle.show();
   }
 
-  // 카테고리 삭제 버튼 클릭 이벤트
-  var deletingCategoryIndex = null;
-  
-  $(document).on('click', '.delete-category-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    console.log('카테고리 삭제 버튼 클릭됨');
-    
-    var categoryHeader = $(this).closest('.category-header');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
-    deletingCategoryIndex = categoryHeader.data('category-index');
-    
-    if (confirm('"' + categoryName + '" 카테고리와 모든 하위 이벤트를 삭제하시겠습니까?')) {
-      confirmCategoryDelete();
-    } else {
-      deletingCategoryIndex = null;
-    }
-  });
-
-  // 토글 버튼 클릭 이벤트 (동적 요소 포함)
-  $(document).on('click', '.category-toggle-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    console.log('토글 버튼 클릭됨!');
-    
-    var categoryHeader = $(this).closest('.category-header');
-    var categoryIndex = categoryHeader.data('category-index');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
-    
-    console.log('클릭된 카테고리:', categoryIndex, categoryName);
-    
-    var isCollapsed = categoryHeader.hasClass('category-collapsed');
-    console.log('현재 상태:', isCollapsed ? '접힘' : '펼침');
-    
-    if (isCollapsed) {
-      // 펼치기
-      console.log('펼치기 시작');
-      categoryHeader.removeClass('category-collapsed');
-      $(this).removeClass('collapsed').text('▼');
-      
-      // 해당 카테고리의 프로젝트들만 표시 (JavaScript로 직접 제어)
-      $('.project-item[data-category-index="' + categoryIndex + '"]').removeClass('hidden').show();
-      console.log('프로젝트 아이템들 표시 완료');
-      
-      // 타임라인에서 해당 카테고리의 행들 표시
-      showTimelineRows(categoryIndex);
-      
-      // 라인 높이 업데이트 (행이 나타남)
-      setTimeout(function() {
-        updateLineHeight();
-      }, 50);
-      
-    } else {
-      // 접기
-      console.log('접기 시작');
-      categoryHeader.addClass('category-collapsed');
-      $(this).addClass('collapsed').text('▶');
-      
-      // 해당 카테고리의 프로젝트들만 숨기기 (JavaScript로 직접 제어)
-      $('.project-item[data-category-index="' + categoryIndex + '"]').addClass('hidden');
-      console.log('프로젝트 아이템들 숨기기 완료');
-      
-      // 타임라인에서 해당 카테고리의 행들 숨기기
-      hideTimelineRows(categoryIndex);
-      
-      // 라인 높이 업데이트 (행이 숨겨짐)
-      setTimeout(function() {
-        updateLineHeight();
-      }, 50);
-    }
-  });
+  // (카테고리 삭제/토글 이벤트 핸들러는 registerEventHandlers()에서 등록됨)
 
   // 카테고리 삭제 확인 함수 (수정된 버전)
   function confirmCategoryDelete() {
@@ -1259,84 +1301,64 @@ $(document).ready(function() {
     var timelineRow = scheduleInfo.timelineRow;
     
     // 날짜 계산 - 종료일 미포함 방식
-    var startDate = new Date(<%= start_date.to_time.to_i * 1000 %>);
+    var startDate = new Date(TL_VIEWPORT.originDate.getTime());
     var projectStartDays = Math.round((scheduleData.start_date - startDate) / (1000 * 60 * 60 * 24));
     var projectDurationDays = Math.round((scheduleData.end_date - scheduleData.start_date) / (1000 * 60 * 60 * 24));  // 종료일 미포함
     var barLeft = projectStartDays * <%= cell_width %>;
     var barWidth = projectDurationDays * <%= cell_width %>;
-    var totalWidth = <%= total_width %>;
-    
+
     console.log('날짜 계산 결과:', {
       projectStartDays: projectStartDays,
       projectDurationDays: projectDurationDays,
       barLeft: barLeft,
       barWidth: barWidth
     });
-    
-    // 표시 범위 내에 있는지 확인
-    if (barLeft >= -barWidth && barLeft <= totalWidth) {
-      // 기존 스케줄 바들의 z-index 확인
-      var existingBars = timelineRow.find('.project-bar');
-      var maxZIndex = 100;
-      existingBars.each(function() {
-        var currentZIndex = parseInt($(this).css('z-index')) || 100;
-        if (currentZIndex > maxZIndex) {
-          maxZIndex = currentZIndex;
-        }
-      });
-      var newZIndex = maxZIndex + 1;
-      
-      // 색상 확인 (개별 색상 > 카테고리 색상)
-      var scheduleKey = scheduleInfo.eventName + '_' + existingBars.length;
-      var scheduleColor = scheduleColors[scheduleKey];
-      var categoryColor = getCategoryColor(scheduleInfo.categoryName);
-      var appliedColor = scheduleColor || categoryColor;
-      
-      var barClass = appliedColor ? 'project-bar custom-color' : 'project-bar issue-' + scheduleData.issue;
-      var barStyle = 'position: absolute; top: 2px; left: ' + Math.max(0, barLeft) + 'px; width: ' + Math.min(barWidth, totalWidth - Math.max(0, barLeft)) + 'px; z-index: ' + newZIndex + ';';
-      
-      if (appliedColor) {
-        barStyle += ' background-color: ' + appliedColor + ';';
+
+    // 기존 스케줄 바들의 z-index 확인
+    var existingBars = timelineRow.find('.project-bar');
+    var maxZIndex = 100;
+    existingBars.each(function() {
+      var currentZIndex = parseInt($(this).css('z-index')) || 100;
+      if (currentZIndex > maxZIndex) {
+        maxZIndex = currentZIndex;
       }
-      
-      // 새 스케줄 바 생성
-      var displayName = scheduleData.name.length > 20 ? scheduleData.name.substring(0, 20) + '...' : scheduleData.name;
-      // done_ratio가 null이 아닐 경우 퍼센트 추가
-      if (scheduleData.done_ratio !== null && scheduleData.done_ratio !== undefined) {
-        displayName += ' (' + scheduleData.done_ratio + '%)';
-      }
-      
-      // 이슈 링크 아이콘 HTML (공통 함수 사용)
-      var issueLinkIcon = generateIssueLinkIcon(scheduleData.issue);
-      
-      var newScheduleBarHtml = '<div class="' + barClass + '" ' +
-        'style="' + barStyle + '" ' +
-        'title="' + scheduleData.name + ' (' + formatLocalDate(scheduleData.start_date) + ' ~ ' + formatLocalDate(scheduleData.end_date) + ')" ' +
-        'data-schedule-index="' + (existingBars.length) + '" ' +
-        'data-issue-number="' + scheduleData.issue + '" ' +
-        'data-done-ratio="' + scheduleData.done_ratio + '">' +
-        '<span class="project-bar-text">' + displayName.replace(/\n/g, '<br>') + '</span>' +
-        issueLinkIcon +
-        '</div>';
-      
-      // 타임라인 행에 추가
-      timelineRow.append(newScheduleBarHtml);
-      
-      // 새로 추가된 바에 드래그/리사이즈 기능 적용
-      var newBar = timelineRow.find('.project-bar').last();
-      // 원문 스케줄명을 데이터 속성으로 보존
-      newBar.attr('data-schedule-name', scheduleData.name);
-      applyDraggableToElements(newBar);
-      
-      console.log('새 스케줄 바 추가됨');
-      
-      
-      // 사이드바의 스케줄 개수 업데이트
-      updateEventScheduleCount(scheduleInfo.eventName, scheduleInfo.categoryName);
-      
-    } else {
-      console.log('스케줄이 표시 범위를 벗어남');
+    });
+    var newZIndex = maxZIndex + 1;
+
+    // 색상 확인 (개별 색상 > 카테고리 색상)
+    var scheduleKey = scheduleInfo.eventName + '_' + existingBars.length;
+    var scheduleColor = scheduleColors[scheduleKey];
+    var categoryColor = getCategoryColor(scheduleInfo.categoryName);
+    var appliedColor = scheduleColor || categoryColor;
+
+    var barClass = appliedColor ? 'project-bar custom-color' : 'project-bar issue-' + scheduleData.issue;
+    var barStyle = 'position: absolute; top: 2px; left: ' + barLeft + 'px; width: ' + barWidth + 'px; z-index: ' + newZIndex + ';';
+
+    if (appliedColor) {
+      barStyle += ' background-color: ' + appliedColor + ';';
     }
+
+    // 새 스케줄 바 생성 (XSS-safe DOM construction)
+    var $newBar = createScheduleBarElement(
+      barClass, barStyle,
+      scheduleData.name,
+      formatLocalDate(scheduleData.start_date),
+      formatLocalDate(scheduleData.end_date),
+      existingBars.length,
+      scheduleData.issue,
+      scheduleData.done_ratio
+    );
+
+    // 타임라인 행에 추가
+    timelineRow.append($newBar);
+
+    // 새로 추가된 바에 드래그/리사이즈 기능 적용
+    applyDraggableToElements($newBar);
+
+    console.log('새 스케줄 바 추가됨');
+
+    // 사이드바의 스케줄 개수 업데이트
+    updateEventScheduleCount(scheduleInfo.eventName, scheduleInfo.categoryName);
     
     console.log('=== 새 스케줄 추가 완료 ===');
   }
@@ -1370,13 +1392,7 @@ $(document).ready(function() {
 
   // 카테고리 색상 복원 함수는 더 이상 필요하지 않음 (서버에서 직접 렌더링)
 
-  // 초기 드래그 기능 설정
-  initializeProjectBarDraggable();
-    
-  // 초기 라인 높이 설정
-  setTimeout(function() {
-    updateLineHeight();
-  }, 100);
+  // (초기 드래그 기능 및 라인 높이는 document.ready 초기화 블록에서 이미 설정됨)
 
   // JSON 내보내기 버튼 클릭 이벤트
   $('#exportJsonBtn').click(function() {
@@ -1474,7 +1490,7 @@ $(document).ready(function() {
       // title에서 날짜를 찾을 수 없으면 위치/크기로 계산
       var barLeft = parseInt(scheduleBar.css('left')) || 0;
       var barWidth = scheduleBar.width() || <%= cell_width %>;
-      var startDateObj = new Date(<%= start_date.to_time.to_i * 1000 %>);
+      var startDateObj = new Date(TL_VIEWPORT.originDate.getTime());
       
       // 시작일 계산
       var startDayOffset = Math.floor(barLeft / cellWidth);
@@ -1653,8 +1669,8 @@ $(document).ready(function() {
       return;
     }
     
-    // 사이드바에서 이벤트 이름 업데이트
-    eventItem.find('.project-name').html(newName.replace(/\n/g, '<br>'));
+    // 사이드바에서 이벤트 이름 업데이트 (XSS-safe)
+    eventItem.find('.project-name').text(newName);
     
     // 타임라인에서 해당 이벤트의 data-event-name 업데이트
     var categoryIndex = eventItem.data('category-index');

@@ -1,4 +1,56 @@
 <style>
+/* CSS Custom Properties */
+:root {
+  /* Colors */
+  --tl-bg-primary: #fff;
+  --tl-bg-secondary: #f8f9fa;
+  --tl-bg-header: #e9ecef;
+  --tl-bg-category: #d1ecf1;
+  --tl-border-light: #eee;
+  --tl-border-medium: #ddd;
+  --tl-border-dark: #ccc;
+  --tl-border-category: #bee5eb;
+  --tl-text-primary: #333;
+  --tl-text-secondary: #666;
+  --tl-text-category: #0c5460;
+  --tl-text-weekday: #999;
+  --tl-text-saturday: #33bbff;
+  --tl-text-sunday: #ff8888;
+  --tl-accent-green: #28a745;
+  --tl-accent-blue: #007bff;
+  --tl-accent-red: #dc3545;
+  --tl-accent-yellow: #ffc107;
+  --tl-accent-cyan: #17a2b8;
+  --tl-accent-gray: #6c757d;
+  --tl-today-color: #ff4757;
+
+  /* Dimensions */
+  --tl-sidebar-width: 300px;
+  --tl-header-height: 80px;
+  --tl-category-height: 30px;
+  --tl-row-height: 50px;
+  --tl-bar-height: 46px;
+
+  /* Z-index Scale */
+  --z-grid: 50;
+  --z-header: 10;
+  --z-sidebar-header: 11;
+  --z-project-bar: 200;
+  --z-timeline-row: 300;
+  --z-date-grid: 300;
+  --z-today-line: 555;
+  --z-popup-base: 1000;
+  --z-popup-overlay: 1002;
+  --z-popup-edit: 1003;
+  --z-color-picker: 1004;
+  --z-drag-helper: 1001;
+  --z-bar-hover: 9999;
+  --z-bar-dragging: 10000;
+
+  /* Transitions */
+  --tl-transition: 0.2s ease;
+}
+
 /* 스크롤바 커스터마이징 */
 .timeline-main::-webkit-scrollbar,
 .timeline-sidebar::-webkit-scrollbar,
@@ -36,20 +88,20 @@
 
 .timeline-container {
   display: flex;
-  border: 1px solid #ddd;
-  background: #fff;
-  height: calc(100vh - 200px); /* 브라우저 높이에서 여백을 뺀 고정 높이 */
-  min-height: 600px; /* 최소 높이 설정 */
-  overflow: hidden; /* 컨테이너 자체의 스크롤 방지 */
+  border: 1px solid var(--tl-border-medium);
+  background: var(--tl-bg-primary);
+  height: calc(100vh - 200px);
+  min-height: 600px;
+  overflow: hidden;
 }
 
 .timeline-sidebar {
-  width: 300px;
-  min-width: 300px;
-  background: #f8f9fa;
-  border-right: 1px solid #ddd;
-  overflow: hidden; /* 사이드바 자체는 스크롤 없음 */
-  height: 100%; /* 컨테이너 높이에 맞춤 */
+  width: var(--tl-sidebar-width);
+  min-width: var(--tl-sidebar-width);
+  background: var(--tl-bg-secondary);
+  border-right: 1px solid var(--tl-border-medium);
+  overflow: hidden;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -63,7 +115,8 @@
 .timeline-main {
   flex: 1;
   overflow-x: auto; /* 가로 스크롤 허용 */
-  overflow-y: auto; /* 세로 스크롤 허용 */
+  overflow-y: hidden; /* 세로 스크롤은 timeline-body에서만 처리 */
+  overflow-anchor: none; /* 브라우저 스크롤 앵커링 비활성화 (좌측 확장 시 점프 방지) */
   height: 100%; /* 컨테이너 높이에 맞춤 */
   display: flex;
   flex-direction: column;
@@ -71,32 +124,41 @@
 
 .timeline-main-inner {
   min-width: 1500px;
-  height: 100%; /* 타임라인 높이에 맞춤 */
+  flex: 1; /* 수평 스크롤바 공간을 제외한 나머지 높이를 정확히 채움 */
+  min-height: 0; /* flex 오버플로우 방지 */
   display: flex;
   flex-direction: column;
 }
 
 /* 헤더 스타일 */
 .timeline-header {
-  height: 80px;
-  border-bottom: 1px solid #ddd;
-  background: #fff;
+  height: var(--tl-header-height);
+  border-bottom: 1px solid var(--tl-border-medium);
+  background: var(--tl-bg-primary);
   position: sticky;
   top: 0;
-  z-index: 10;
-  flex-shrink: 0; /* 헤더 높이 고정 */
-  min-width: 1500px; /* 가로 스크롤과 함께 움직이도록 */
+  z-index: var(--z-header);
+  flex-shrink: 0;
+  min-width: 1500px;
 }
 
 .month-header {
   display: flex;
   height: 40px;
   border-bottom: 1px solid #ccc;
+  cursor: grab;
 }
 
 .day-header {
   display: flex;
   height: 40px;
+  cursor: grab;
+}
+
+.timeline-header.dragging,
+.timeline-header.dragging .month-header,
+.timeline-header.dragging .day-header {
+  cursor: grabbing;
 }
 
 .month-cell, .day-cell {
@@ -109,18 +171,18 @@
 }
 
 .day-cell {
-    color: #bbbbbb;
-    border-bottom: 1px solid #ccc;
+    color: var(--tl-text-weekday);
+    border-bottom: 1px solid var(--tl-border-dark);
 }
 
 /* 주말 날짜 색상 */
 .day-cell.saturday {
-    color: #33bbff; /* 토요일 - 파란색 */
+    color: var(--tl-text-saturday);
 }
 
 .day-cell.sunday {
-    color: #ff8888; /* 일요일 - 빨간색 */
-    border-right: 2px solid #ddd;
+    color: var(--tl-text-sunday);
+    border-right: 2px solid var(--tl-border-medium);
 }
 
 .month-cell {
@@ -146,18 +208,18 @@
 
 /* 사이드바 스타일 */
 .sidebar-header {
-  height: 80px; /* 타임라인 헤더와 동일한 높이 */
-  border-bottom: 1px solid #ddd;
+  height: var(--tl-header-height);
+  border-bottom: 1px solid var(--tl-border-medium);
   display: flex;
   align-items: center;
-  justify-content: space-between; /* 제목과 버튼을 양쪽 끝에 배치 */
+  justify-content: space-between;
   padding: 0 15px;
   font-weight: bold;
-  background: #e9ecef;
-  flex-shrink: 0; /* 헤더 높이 고정 */
+  background: var(--tl-bg-header);
+  flex-shrink: 0;
   position: sticky;
   top: 0;
-  z-index: 11; /* 타임라인 헤더보다 높게 설정 */
+  z-index: var(--z-sidebar-header);
 }
 
 .sidebar-title {
@@ -192,15 +254,15 @@
 
 /* 카테고리 헤더 - 인라인 편집 지원 */
 .category-header {
-  background: #d1ecf1;
+  background: var(--tl-bg-category);
   padding: 8px 15px;
   font-weight: bold;
   font-size: 11px;
-  color: #0c5460;
-  border-bottom: 1px solid #bee5eb;
+  color: var(--tl-text-category);
+  border-bottom: 1px solid var(--tl-border-category);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  height: 30px;
+  height: var(--tl-category-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -347,14 +409,14 @@
 
 /* 프로젝트 아이템 스타일 - 타임라인과 높이 맞춤 */
 .project-item {
-  height: 50px; /* 타임라인 행과 동일한 높이 */
-  border-bottom: 1px solid #eee; /* 구분선 추가 */
+  height: var(--tl-row-height);
+  border-bottom: 1px solid var(--tl-border-light);
   display: flex;
   align-items: center;
   padding: 0 15px;
   cursor: pointer;
   box-sizing: border-box;
-  background: #fff; /* 배경색 명시 */
+  background: var(--tl-bg-primary);
   position: relative;
 }
 
@@ -610,9 +672,9 @@
 
 /* 카테고리 행 스타일 - 사이드바와 높이 맞춤 */
 .timeline-row.category-row {
-  height: 30px; /* 사이드바 카테고리 헤더와 동일한 높이 */
+  height: var(--tl-category-height);
   background-color: #f5f5f5;
-  border-bottom: 1px solid #bee5eb; /* 카테고리 헤더와 동일한 구분선 */
+  border-bottom: 1px solid var(--tl-border-category);
   box-sizing: border-box;
 }
 
@@ -621,13 +683,13 @@
 }
 
 .timeline-row {
-  height: 50px; /* 사이드바 프로젝트 아이템과 동일한 높이 */
-  border-bottom: 1px solid #eee; /* 구분선 추가 */
+  height: var(--tl-row-height);
+  border-bottom: 1px solid var(--tl-border-light);
   position: relative;
   box-sizing: border-box;
-  z-index: 300;
-  pointer-events: auto; /* 마우스 이벤트 활성화 - 셀 클릭을 위해 */
-  overflow: visible; /* absolute 요소들이 보이도록 */
+  z-index: var(--z-timeline-row);
+  pointer-events: auto;
+  overflow: visible;
 }
 
 .timeline-grid {
@@ -668,30 +730,30 @@
 
 /* 프로젝트 바 */
 .project-bar {
-  position: absolute !important; /* 강제로 absolute positioning 적용 */
-  height: 46px;
-  top: 2px !important; /* 강제로 같은 위치에 배치 */
+  position: absolute;
+  height: var(--tl-bar-height);
+  top: 2px;
   border-radius: 4px;
   padding: 0 8px;
   color: white;
   font-size: 12px;
   font-weight: bold;
-  cursor: move; /* 드래그 가능함을 표시 */
+  cursor: move;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  transition: all 0.2s;
-  user-select: none; /* 텍스트 선택 방지 */
-  pointer-events: auto; /* 마우스 이벤트 활성화 보장 */
-  z-index: 200; /* 셀보다 높은 z-index로 설정 */
-  line-height: 1.2; /* 줄바꿈 지원을 위한 line-height 조정 */
-  white-space: pre-wrap; /* 줄바꿈 허용 */
-  overflow: hidden; /* 넘치는 텍스트 숨김 */
-  text-overflow: ellipsis; /* 넘치는 텍스트를 ... 으로 표시 */
-  float: none !important; /* float 속성 제거 */
-  display: flex !important; /* flexbox로 변경하여 중앙 정렬 */
-  align-items: center; /* 수직 중앙 정렬 */
-  justify-content: flex-start; /* 좌측 정렬 */
-  word-wrap: break-word; /* 긴 단어 줄바꿈 */
-  text-align: left; /* 텍스트 좌측 정렬 */
+  transition: all var(--tl-transition);
+  user-select: none;
+  pointer-events: auto;
+  z-index: var(--z-project-bar);
+  line-height: 1.2;
+  white-space: pre-wrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  float: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  word-wrap: break-word;
+  text-align: left;
 }
 
 .project-bar-text {
@@ -707,11 +769,11 @@
 .project-bar:hover {
   transform: translateY(-1px);
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-  z-index: 9999 !important; /* 호버 시 최상위로 올라옴 */
+  z-index: var(--z-bar-hover) !important;
 }
 
 .project-bar.ui-draggable-dragging {
-  z-index: 10000 !important; /* 드래그 중 최상위 */
+  z-index: var(--z-bar-dragging) !important;
   opacity: 0.8;
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
@@ -780,7 +842,7 @@
   background-image: linear-gradient(to bottom, #ff4757 50%, transparent 50%);
   background-size: 2px 8px;
   background-repeat: repeat-y;
-  z-index: 555;
+  z-index: var(--z-today-line);
   pointer-events: none;
 }
 
@@ -790,7 +852,7 @@
   left: -6px;
   width: 14px;
   height: 14px;
-  background-color: #ff4757;
+  background-color: var(--tl-today-color);
   border-radius: 50%;
 }
 
@@ -802,7 +864,7 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1002;
+  z-index: var(--z-popup-overlay);
   display: none;
   align-items: center;
   justify-content: center;
@@ -913,7 +975,7 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1001;
+  z-index: var(--z-drag-helper);
   display: none;
   align-items: center;
   justify-content: center;
@@ -1013,7 +1075,7 @@ body.timeline-view {
 
 .project-bar.ui-resizable-resizing {
   opacity: 0.8;
-  z-index: 10000 !important; /* 리사이즈 중 최상위 */
+  z-index: var(--z-bar-dragging) !important;
 }
 
 /* 날짜 구분선 스타일 */
@@ -1023,7 +1085,7 @@ body.timeline-view {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 300;
+  z-index: var(--z-date-grid);
   pointer-events: none;
 }
 
@@ -1062,7 +1124,7 @@ body.timeline-view {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
+  z-index: var(--z-popup-base);
   display: none;
   align-items: center;
   justify-content: center;
@@ -1172,8 +1234,8 @@ body.timeline-view {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1002;
-  display: none; /* 기본적으로 숨김 */
+  z-index: var(--z-popup-overlay);
+  display: none;
   align-items: center;
   justify-content: center;
 }
@@ -1258,7 +1320,7 @@ body.timeline-view {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1003;
+  z-index: var(--z-popup-edit);
   display: none;
   align-items: center;
   justify-content: center;
@@ -1353,7 +1415,7 @@ body.timeline-view {
   display: flex;
   flex-direction: row;
   gap: 10px;
-  z-index: 1000;
+  z-index: var(--z-popup-base);
 }
 
 .json-btn {
@@ -1503,7 +1565,7 @@ body.timeline-view {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1004;
+  z-index: var(--z-color-picker);
   display: none;
   align-items: center;
   justify-content: center;
@@ -1656,7 +1718,31 @@ body.timeline-view {
   display: flex;
   gap: 12px;
   justify-content: flex-end;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--tl-border-light);
   padding-top: 16px;
+}
+
+/* 접근성: 포커스 상태 */
+.category-btn:focus-visible,
+.event-btn:focus-visible,
+.add-category-btn:focus-visible,
+.popup-btn:focus-visible,
+.schedule-edit-btn:focus-visible,
+.json-btn:focus-visible,
+.duration-btn:focus-visible,
+.color-preset-item:focus-visible,
+.timeline-tab:focus-visible,
+.add-timeline-btn:focus-visible {
+  outline: 2px solid var(--tl-accent-blue);
+  outline-offset: 2px;
+}
+
+.form-input:focus-visible,
+.date-input:focus-visible,
+.category-edit-input:focus-visible,
+.event-edit-input:focus-visible {
+  outline: none;
+  border-color: var(--tl-accent-blue);
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
 }
 </style>

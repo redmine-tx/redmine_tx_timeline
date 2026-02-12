@@ -30,8 +30,8 @@
     // XLSX 내보내기용: options에 날짜 정보 추가 (기존 JSON 저장 형식과의 호환성을 위해 선택적)
     if (includeTimeline) {
       jsonData.options = jsonData.options || {};
-      jsonData.options.startDate = "<%= start_date.strftime('%Y-%m-%d') %>";
-      jsonData.options.endDate = "<%= end_date.strftime('%Y-%m-%d') %>";
+      jsonData.options.startDate = formatLocalDate(TL_VIEWPORT.originDate);
+      jsonData.options.endDate = formatLocalDate(TL_VIEWPORT.endDate);
     }
     
     // 데이터 캐싱을 위한 변수들
@@ -178,7 +178,7 @@
         //updateLineHeight();
         
         // 스크롤 위치 복원 (오늘 날짜 위치)
-        var todayPosition = <%= today_position %>;
+        var todayPosition = Math.round((new Date() - TL_VIEWPORT.originDate) / (1000 * 60 * 60 * 24)) * TL_VIEWPORT.cellWidth;
         var timelineContainer = $('.timeline-main');
         var containerWidth = timelineContainer.width();
         var scrollLeft = Math.max(0, todayPosition - containerWidth * 0.2);
