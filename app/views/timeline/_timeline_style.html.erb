@@ -301,32 +301,6 @@
   flex: 1;
 }
 
-/* 카테고리 편집 폼 - 기본적으로 숨김 */
-.category-edit-form {
-  display: none;
-  flex: 1;
-  margin-left: 22px; /* 토글 버튼 공간만큼 */
-}
-
-.category-edit-input {
-  width: 100%;
-  border: 1px solid #007cba;
-  background: white;
-  padding: 2px 6px;
-  font-size: 11px;
-  font-weight: bold;
-  color: #0c5460;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  outline: none;
-  border-radius: 2px;
-}
-
-.category-edit-input:focus {
-  border-color: #005a8b;
-  box-shadow: 0 0 3px rgba(0, 124, 186, 0.3);
-}
-
 /* 카테고리 액션 버튼들 */
 .category-actions {
   display: flex;
@@ -338,22 +312,6 @@
 
 .category-header:hover .category-actions {
   opacity: 1;
-}
-
-/* 편집 모드일 때는 항상 표시하지 않음 */
-.category-header.editing .category-actions {
-  display: none !important;
-}
-
-/* 편집 액션 버튼들 - 편집 모드에서만 표시 */
-.category-edit-actions {
-  display: none;
-  gap: 4px;
-  margin-left: 8px;
-}
-
-.category-header.editing .category-edit-actions {
-  display: flex;
 }
 
 .category-btn {
@@ -1629,10 +1587,25 @@ body.timeline-view {
   margin-bottom: 20px;
 }
 
+.color-picker-name-section,
 .color-preset-section,
 .color-custom-section,
 .color-preview-section {
   margin-bottom: 24px;
+}
+
+.color-picker-name-section input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+}
+
+.color-picker-name-section input:focus {
+  border-color: #007bff;
+  box-shadow: 0 0 3px rgba(0, 123, 255, 0.3);
 }
 
 .color-preset-section h4,
@@ -1896,7 +1869,6 @@ body.timeline-readonly-page .json-import-btn {
 
 .form-input:focus-visible,
 .date-input:focus-visible,
-.category-edit-input:focus-visible,
 .event-edit-input:focus-visible {
   outline: none;
   border-color: var(--tl-accent-blue);

@@ -218,8 +218,7 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
     $header.append($left);
     var $actions = $('<div class="category-actions">');
     $actions.append($('<button class="category-btn add-event-btn" type="button" title="이벤트 추가">').text('+'));
-    $actions.append($('<button class="category-btn edit-category-btn" type="button" title="이름 변경">').text('✏'));
-    $actions.append($('<button class="category-btn color-category-btn" type="button" title="색상 변경">').text('🎨'));
+    $actions.append($('<button class="category-btn edit-category-btn" type="button" title="편집">').text('✏'));
     $actions.append($('<button class="category-btn delete-category-btn" type="button" title="카테고리 삭제">').text('×'));
     $actions.appendTo($header);
     return $header;
@@ -758,68 +757,70 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
     
     function moveEventToCategory(eventItem, sourceCategoryIndex, targetCategoryIndex) {
       console.log('이벤트 카테고리 이동:', sourceCategoryIndex, '->', targetCategoryIndex);
-      
+
       var eventName = eventItem.find('.project-name').text().trim();
       var targetCategoryHeader = $('.category-header[data-category-index="' + targetCategoryIndex + '"]');
       var sourceCategoryHeader = $('.category-header[data-category-index="' + sourceCategoryIndex + '"]');
-      
+
       if (targetCategoryHeader.length === 0) {
         console.error('타겟 카테고리를 찾을 수 없습니다');
         return;
       }
-      
+
       // 원본 카테고리와 타겟 카테고리 이름 가져오기
       var sourceCategoryName = sourceCategoryHeader.find('.category-title').text().trim();
       var targetCategoryName = targetCategoryHeader.find('.category-title').text().trim();
-      
+
       console.log('카테고리 이름:', sourceCategoryName, '->', targetCategoryName);
-      
-      // 1. 사이드바에서 이벤트 아이템 이동
-      var newEventItem = eventItem.clone();
-      newEventItem.attr('data-category-index', targetCategoryIndex);
-      
-      // 타겟 카테고리의 마지막 이벤트 다음에 삽입
+
+      // 1. 사이드바에서 이벤트 아이템 이동 (clone 대신 직접 이동)
+      eventItem.attr('data-category-index', targetCategoryIndex);
+
       var targetCategoryEvents = $('.project-item[data-category-index="' + targetCategoryIndex + '"]');
       if (targetCategoryEvents.length > 0) {
-        targetCategoryEvents.last().after(newEventItem);
+        eventItem.detach().insertAfter(targetCategoryEvents.last());
       } else {
-        targetCategoryHeader.after(newEventItem);
+        eventItem.detach().insertAfter(targetCategoryHeader);
       }
-      
-      // 2. 타임라인에서 해당 이벤트의 모든 행 찾기
-      var originalTimelineRows = $('.timeline-row[data-category-name="' + sourceCategoryName + '"][data-event-name="' + eventName + '"]');
-      console.log('이동할 타임라인 행 개수:', originalTimelineRows.length);
-      
-      // 3. 타임라인 행들을 새로운 위치로 이동
-      if (originalTimelineRows.length > 0) {
-        // 타겟 카테고리에서 이벤트 삽입 위치 찾기
-        var insertPosition = findTimelineInsertPosition(targetCategoryIndex, eventName);
-        
-        // 각 행을 새로운 위치로 이동하고 데이터 속성 업데이트
-        originalTimelineRows.each(function() {
-          var $row = $(this);
-          $row.attr('data-category-name', targetCategoryName);
-          
-          // 행을 새로운 위치로 이동
-          if (insertPosition && insertPosition.length > 0) {
-            $row.detach().insertAfter(insertPosition);
-            insertPosition = $row; // 다음 행은 현재 행 다음에 삽입
+
+      // 2. 타임라인에서 해당 이벤트 행 찾기 및 이동
+      var timelineRow = $('.timeline-row[data-category-name="' + sourceCategoryName + '"][data-event-name="' + eventName + '"]');
+      console.log('이동할 타임라인 행 개수:', timelineRow.length);
+
+      if (timelineRow.length > 0) {
+        // data-category-name 업데이트
+        timelineRow.attr('data-category-name', targetCategoryName);
+
+        // 타겟 카테고리의 마지막 행 뒤에 삽입
+        var targetCategoryRows = $('.timeline-row[data-category-name="' + targetCategoryName + '"]');
+        if (targetCategoryRows.length > 0) {
+          timelineRow.detach().insertAfter(targetCategoryRows.last());
+        } else {
+          // 타겟 카테고리 행이 없으면 카테고리 row 뒤에
+          var targetCatRow = $('.timeline-row.category-row[data-category-name="' + targetCategoryName + '"]');
+          if (targetCatRow.length > 0) {
+            timelineRow.detach().insertAfter(targetCatRow);
           } else {
-            // 삽입 위치를 찾지 못한 경우 타임라인 끝에 추가
-            $row.detach().appendTo('.timeline-body');
+            timelineRow.detach().appendTo('.timeline-body');
           }
-        });
+        }
       }
-      
-      // 4. 원본 이벤트 아이템 제거
-      eventItem.remove();
-      
-      // 5. 프로젝트 바 드래그 기능 재초기화
+
+      // 3. 카테고리가 접힌 상태면 숨기기/펼치기 동기화
+      if (targetCategoryHeader.hasClass('category-collapsed')) {
+        eventItem.addClass('hidden');
+        timelineRow.addClass('hidden');
+      } else {
+        eventItem.removeClass('hidden');
+        timelineRow.removeClass('hidden');
+      }
+
+      // 4. 프로젝트 바 드래그 기능 재초기화
       initializeProjectBarDraggable();
-      
-      // 6. 라인 높이 업데이트
+
+      // 5. 라인 높이 업데이트
       updateLineHeight();
-      
+
       markDirty();
       console.log('이벤트 이동 완료:', eventName);
     }
@@ -827,57 +828,44 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
     // 같은 카테고리 내에서 이벤트 순서 변경
     function reorderEventInCategory(sourceEventItem, targetEventItem) {
       console.log('이벤트 순서 변경 시작');
-      
+
       var sourceEventName = sourceEventItem.find('.project-name').text().trim();
       var targetEventName = targetEventItem.find('.project-name').text().trim();
       var categoryIndex = sourceEventItem.data('category-index');
       var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"]')
                          .find('.category-title').text().trim();
-      
+
       console.log('순서 변경:', sourceEventName, '->', targetEventName, '(카테고리:', categoryName + ')');
-      
-      // 1. 사이드바에서 이벤트 순서 변경
-      var sourceIndex = sourceEventItem.index();
-      var targetIndex = targetEventItem.index();
-      
-      console.log('사이드바 인덱스:', sourceIndex, '->', targetIndex);
-      
-      if (sourceIndex < targetIndex) {
-        // 아래쪽으로 이동 - 타겟 요소 다음에 삽입
+
+      // 1. 사이드바에서 이벤트 순서 변경 - DOM 위치로 방향 판별
+      var movingDown = (sourceEventItem[0].compareDocumentPosition(targetEventItem[0]) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+      console.log('이동 방향:', movingDown ? '아래' : '위');
+
+      if (movingDown) {
         sourceEventItem.detach().insertAfter(targetEventItem);
       } else {
-        // 위쪽으로 이동 - 타겟 요소 이전에 삽입
         sourceEventItem.detach().insertBefore(targetEventItem);
       }
-      
-      // 2. 타임라인에서 해당 이벤트의 모든 행 찾기
-      var sourceTimelineRows = $('.timeline-row[data-category-name="' + categoryName + '"][data-event-name="' + sourceEventName + '"]');
-      var targetTimelineRows = $('.timeline-row[data-category-name="' + categoryName + '"][data-event-name="' + targetEventName + '"]');
-      
-      console.log('타임라인 행 개수 - 소스:', sourceTimelineRows.length, '타겟:', targetTimelineRows.length);
-      
+
+      // 2. 타임라인에서 해당 이벤트의 행 찾기
+      var sourceTimelineRow = $('.timeline-row[data-category-name="' + categoryName + '"][data-event-name="' + sourceEventName + '"]');
+      var targetTimelineRow = $('.timeline-row[data-category-name="' + categoryName + '"][data-event-name="' + targetEventName + '"]');
+
+      console.log('타임라인 행 - 소스:', sourceTimelineRow.length, '타겟:', targetTimelineRow.length);
+
       // 3. 타임라인에서 이벤트 행 순서 변경
-      if (sourceTimelineRows.length > 0 && targetTimelineRows.length > 0) {
-        var targetLastRow = targetTimelineRows.last();
-        var targetFirstRow = targetTimelineRows.first();
-        
-        if (sourceIndex < targetIndex) {
-          // 아래쪽으로 이동 - 타겟 이벤트의 마지막 행 다음에 삽입
-          sourceTimelineRows.each(function() {
-            $(this).detach().insertAfter(targetLastRow);
-            targetLastRow = $(this); // 다음 행은 현재 행 다음에 삽입
-          });
+      if (sourceTimelineRow.length > 0 && targetTimelineRow.length > 0) {
+        if (movingDown) {
+          sourceTimelineRow.detach().insertAfter(targetTimelineRow);
         } else {
-          // 위쪽으로 이동 - 타겟 이벤트의 첫 번째 행 이전에 삽입
-          sourceTimelineRows.get().reverse().forEach(function(row) {
-            $(row).detach().insertBefore(targetFirstRow);
-          });
+          sourceTimelineRow.detach().insertBefore(targetTimelineRow);
         }
       }
-      
+
       // 4. 라인 높이 업데이트
       updateLineHeight();
-      
+
       markDirty();
       console.log('이벤트 순서 변경 완료:', sourceEventName);
     }
@@ -1098,41 +1086,46 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
     // 카테고리 순서 변경 함수
     function reorderCategory(sourceCategory, targetCategory, insertBefore) {
       console.log('카테고리 순서 변경 시작');
-      
+
       var sourceName = sourceCategory.find('.category-title').text().trim();
       var targetName = targetCategory.find('.category-title').text().trim();
       var sourceIndex = sourceCategory.data('category-index');
       var targetIndex = targetCategory.data('category-index');
-      
+
       console.log('순서 변경:', sourceName, '→', targetName, '(삽입 위치:', insertBefore ? '위' : '아래', ')');
-      
+
       // 1. 사이드바에서 카테고리와 해당 이벤트들 이동
       var sourceEvents = $('.project-item[data-category-index="' + sourceIndex + '"]');
       console.log('이동할 이벤트 수:', sourceEvents.length);
-      
-      // 카테고리와 이벤트들을 한 번에 이동
-      var elementsToMove = sourceCategory.add(sourceEvents);
-      
+
+      // 카테고리 헤더 + 이벤트들을 배열로 구성하여 순차 삽입
+      var sidebarElements = [sourceCategory[0]].concat(sourceEvents.toArray());
+
       if (insertBefore) {
-        elementsToMove.detach().insertBefore(targetCategory);
+        // 역순 삽입으로 순서 유지: 마지막 이벤트부터 insertBefore
+        for (var i = sidebarElements.length - 1; i >= 0; i--) {
+          $(sidebarElements[i]).detach().insertBefore(targetCategory);
+        }
       } else {
         // 타겟 카테고리의 마지막 이벤트 찾기
         var targetEvents = $('.project-item[data-category-index="' + targetIndex + '"]');
-        if (targetEvents.length > 0) {
-          elementsToMove.detach().insertAfter(targetEvents.last());
-        } else {
-          elementsToMove.detach().insertAfter(targetCategory);
+        var insertAfterEl = targetEvents.length > 0 ? targetEvents.last() : targetCategory;
+        // 정순 삽입
+        for (var i = 0; i < sidebarElements.length; i++) {
+          $(sidebarElements[i]).detach().insertAfter(insertAfterEl);
+          insertAfterEl = $(sidebarElements[i]);
         }
       }
-      
+
       // 2. 타임라인에서 카테고리 행과 이벤트 행들 이동
       reorderTimelineForCategory(sourceName, targetName, insertBefore);
-      
+
       // 3. 라인 높이 업데이트
       setTimeout(function() {
         updateLineHeight();
       }, 50);
-      
+
+      markDirty();
       console.log('카테고리 순서 변경 완료');
     }
     

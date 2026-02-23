@@ -463,36 +463,8 @@ function registerEventHandlers() {
     }
   });
 
-  // 카테고리 편집 버튼
+  // 카테고리 편집 버튼 (이름 + 색상 통합)
   $(document).on('click', '.edit-category-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!TL_STATE.isEditMode) return;
-
-    var categoryHeader = $(this).closest('.category-header');
-    enterEditMode(categoryHeader);
-  });
-
-  // 카테고리 편집 저장 버튼
-  $(document).on('click', '.save-category-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    var categoryHeader = $(this).closest('.category-header');
-    saveCategory(categoryHeader);
-  });
-
-  // 카테고리 편집 취소 버튼
-  $(document).on('click', '.cancel-category-btn', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    var categoryHeader = $(this).closest('.category-header');
-    cancelEditMode(categoryHeader);
-  });
-
-  // 카테고리 색상 변경 버튼
-  $(document).on('click', '.color-category-btn', function(e) {
     e.preventDefault();
     e.stopPropagation();
     if (!TL_STATE.isEditMode) return;
@@ -500,22 +472,27 @@ function registerEventHandlers() {
     var categoryHeader = $(this).closest('.category-header');
     var categoryIndex = categoryHeader.data('category-index');
     var categoryName = categoryHeader.find('.category-title').text().trim();
-    
+
     currentColorEditingTarget = {
       type: 'category',
       categoryName: categoryName,
       categoryIndex: categoryIndex,
       categoryHeader: categoryHeader
     };
-    
-    $('#colorPickerTitle').text('카테고리 색상 선택');
+
+    $('#colorPickerTitle').text('카테고리 편집');
     $('#colorPickerTargetName').text(categoryName);
-    
+
+    // 이름 입력 필드 표시 및 값 설정
+    $('#colorPickerNameSection').show();
+    $('#colorPickerNameInput').val(categoryName);
+
     var currentColor = categoryColors[categoryName] || '#6c757d';
     selectedColor = currentColor;
     updateColorSelection(currentColor);
-    
+
     $('#colorPickerPopup').addClass('show');
+    setTimeout(function() { $('#colorPickerNameInput').focus().select(); }, 100);
   });
 
   // 카테고리 삭제 버튼
@@ -556,18 +533,6 @@ function registerEventHandlers() {
       $('.project-item[data-category-index="' + categoryIndex + '"]').addClass('hidden');
       hideTimelineRows(categoryIndex);
       setTimeout(function() { updateLineHeight(); }, 50);
-    }
-  });
-
-  // 카테고리 편집 입력 필드에서 Enter/Escape 키 처리
-  $(document).on('keydown', '.category-edit-input', function(e) {
-    var categoryHeader = $(this).closest('.category-header');
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      saveCategory(categoryHeader);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      cancelEditMode(categoryHeader);
     }
   });
 
@@ -707,6 +672,68 @@ function registerEventHandlers() {
       });
     }
   });
+
+  // 카테고리 삭제 확인 함수
+  function confirmCategoryDelete() {
+    if (deletingCategoryIndex === null) return;
+
+    var categoryHeader = $('.category-header[data-category-index="' + deletingCategoryIndex + '"]');
+    var categoryName = categoryHeader.find('.category-title').text().trim();
+
+    console.log('카테고리 삭제 시작:', categoryName, '인덱스:', deletingCategoryIndex);
+
+    // 카테고리 색상 정보 삭제
+    delete categoryColors[categoryName];
+
+    // 1. 타임라인에서 해당 카테고리의 행들 먼저 삭제 (사이드바 변경 전에)
+    deleteTimelineRowsForCategory(deletingCategoryIndex);
+
+    // 2. 해당 카테고리의 모든 프로젝트 아이템 삭제 (사이드바)
+    var deletedProjectCount = $('.project-item[data-category-index="' + deletingCategoryIndex + '"]').length;
+    $('.project-item[data-category-index="' + deletingCategoryIndex + '"]').remove();
+    console.log('삭제된 프로젝트 아이템 수:', deletedProjectCount);
+
+    // 3. 카테고리 헤더 삭제 (사이드바)
+    categoryHeader.remove();
+
+    console.log('카테고리 삭제 완료:', categoryName);
+    deletingCategoryIndex = null;
+    markDirty();
+  }
+
+  // 타임라인에서 카테고리 행들 삭제
+  function deleteTimelineRowsForCategory(categoryIndex) {
+    console.log('타임라인 카테고리 행 삭제 시작:', categoryIndex);
+
+    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
+    console.log('삭제할 카테고리 이름:', categoryName);
+
+    if (!categoryName) {
+      console.log('카테고리 이름을 찾을 수 없음 - 삭제 중단');
+      return;
+    }
+
+    // 해당 카테고리의 모든 행 삭제 (이벤트 행 + 카테고리 행)
+    $('.timeline-row[data-category-name="' + categoryName + '"]').remove();
+
+    setTimeout(function() {
+      updateLineHeight();
+    }, 50);
+
+    console.log('타임라인 카테고리 행 삭제 완료');
+  }
+
+  // 타임라인 행들 숨기기 함수
+  function hideTimelineRows(categoryIndex) {
+    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
+    $('.timeline-row[data-category-name="' + categoryName + '"]').not('.category-row').addClass('hidden');
+  }
+
+  // 타임라인 행들 표시 함수
+  function showTimelineRows(categoryIndex) {
+    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
+    $('.timeline-row[data-category-name="' + categoryName + '"]').not('.category-row').removeClass('hidden');
+  }
 
   console.log('이벤트 핸들러 등록 완료');
 }
@@ -1402,11 +1429,37 @@ $(document).ready(function() {
     }
     
     if (currentColorEditingTarget.type === 'category') {
+      var oldName = currentColorEditingTarget.categoryName;
+      var newName = $('#colorPickerNameInput').val().trim();
+
+      if (!newName) {
+        alert('카테고리 이름을 입력하세요.');
+        $('#colorPickerNameInput').focus();
+        return;
+      }
+
+      // 이름이 변경된 경우 업데이트
+      if (newName !== oldName) {
+        // 사이드바 카테고리 제목 업데이트
+        currentColorEditingTarget.categoryHeader.find('.category-title').text(newName);
+
+        // 타임라인 행들의 data-category-name 업데이트
+        $('.timeline-row[data-category-name="' + oldName + '"]').attr('data-category-name', newName);
+
+        // 색상 맵 키 업데이트
+        if (categoryColors[oldName] !== undefined) {
+          categoryColors[newName] = categoryColors[oldName];
+          delete categoryColors[oldName];
+        }
+
+        currentColorEditingTarget.categoryName = newName;
+      }
+
       // 카테고리 색상 저장
-      categoryColors[currentColorEditingTarget.categoryName] = selectedColor;
-      
+      categoryColors[newName] = selectedColor;
+
       // 해당 카테고리의 모든 이벤트들의 스케줄 바 색상 업데이트
-      updateCategoryScheduleColors(currentColorEditingTarget.categoryName, selectedColor);
+      updateCategoryScheduleColors(newName, selectedColor);
     } else if (currentColorEditingTarget.type === 'schedule') {
       // 스케줄 색상 저장
       var scheduleKey = currentColorEditingTarget.scheduleKey;
@@ -1511,180 +1564,7 @@ $(document).ready(function() {
     }
   });
 
-  // 카테고리 편집 모드 진입
-  function enterEditMode(categoryHeader) {
-    console.log('편집 모드 진입');
-    
-    var categoryTitle = categoryHeader.find('.category-title');
-    var editForm = categoryHeader.find('.category-edit-form');
-    var editInput = categoryHeader.find('.category-edit-input');
-    
-    // 현재 제목을 입력 필드에 설정
-    editInput.val(categoryTitle.text().trim());
-    
-    // 편집 모드 클래스 추가
-    categoryHeader.addClass('editing');
-    
-    // 제목 숨기고 편집 폼 표시
-    categoryTitle.hide();
-    editForm.show();
-    
-    // 입력 필드에 포커스
-    editInput.focus().select();
-  }
 
-  // 카테고리 편집 저장
-  function saveCategory(categoryHeader) {
-    console.log('카테고리 저장');
-    
-    var categoryTitle = categoryHeader.find('.category-title');
-    var editForm = categoryHeader.find('.category-edit-form');
-    var editInput = categoryHeader.find('.category-edit-input');
-    
-    var newName = editInput.val().trim();
-    
-    if (newName === '') {
-      alert('카테고리 이름을 입력하세요.');
-      editInput.focus();
-      return;
-    }
-    
-    // 제목 업데이트
-    categoryTitle.text(newName);
-
-    // 편집 모드 종료
-    exitEditMode(categoryHeader);
-    markDirty();
-
-    console.log('카테고리 이름 저장됨:', newName);
-  }
-
-  // 카테고리 편집 취소
-  function cancelEditMode(categoryHeader) {
-    console.log('카테고리 편집 취소');
-    exitEditMode(categoryHeader);
-  }
-
-  // 편집 모드 종료
-  function exitEditMode(categoryHeader) {
-    var categoryTitle = categoryHeader.find('.category-title');
-    var editForm = categoryHeader.find('.category-edit-form');
-    
-    // 편집 모드 클래스 제거
-    categoryHeader.removeClass('editing');
-    
-    // 편집 폼 숨기고 제목 표시
-    editForm.hide();
-    categoryTitle.show();
-  }
-
-  // (카테고리 삭제/토글 이벤트 핸들러는 registerEventHandlers()에서 등록됨)
-
-  // 카테고리 삭제 확인 함수 (수정된 버전)
-  function confirmCategoryDelete() {
-    if (deletingCategoryIndex === null) return;
-    
-    var categoryHeader = $('.category-header[data-category-index="' + deletingCategoryIndex + '"]');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
-    
-    console.log('카테고리 삭제 시작:', categoryName, '인덱스:', deletingCategoryIndex);
-    
-    // 카테고리 색상 정보 삭제
-    delete categoryColors[categoryName];
-    
-    // 1. 타임라인에서 해당 카테고리의 행들 먼저 삭제 (사이드바 변경 전에)
-    deleteTimelineRowsForCategory(deletingCategoryIndex);
-    
-    // 2. 해당 카테고리의 모든 프로젝트 아이템 삭제 (사이드바)
-    var deletedProjectCount = $('.project-item[data-category-index="' + deletingCategoryIndex + '"]').length;
-    $('.project-item[data-category-index="' + deletingCategoryIndex + '"]').remove();
-    console.log('삭제된 프로젝트 아이템 수:', deletedProjectCount);
-    
-    // 3. 카테고리 헤더 삭제 (사이드바)
-    categoryHeader.remove();
-    
-    console.log('카테고리 삭제 완료:', categoryName);
-    deletingCategoryIndex = null;
-    markDirty();
-  }
-
-  // 타임라인에서 카테고리 행들 삭제 (개선된 버전)
-  function deleteTimelineRowsForCategory(categoryIndex) {
-    console.log('타임라인 카테고리 행 삭제 시작:', categoryIndex);
-    
-    // 카테고리 이름 가져오기
-    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
-    console.log('삭제할 카테고리 이름:', categoryName);
-    
-    if (!categoryName) {
-      console.log('카테고리 이름을 찾을 수 없음 - 삭제 중단');
-      return;
-    }
-    
-    // 1. 해당 카테고리의 모든 이벤트 행 삭제
-    var eventRows = $('.timeline-row[data-category-name="' + categoryName + '"]');
-    console.log('삭제할 이벤트 행 수:', eventRows.length);
-    eventRows.remove();
-    
-    // 2. 해당 카테고리의 카테고리 행 삭제
-    // 카테고리 행은 category-row 클래스를 가지며, 순서대로 배치되어 있음
-    var categoryRowIndex = 0;
-    $('.category-header').each(function(index) {
-      if ($(this).data('category-index') == categoryIndex) {
-        categoryRowIndex = index;
-        return false; // break
-      }
-    });
-    
-    var categoryRow = $('.timeline-row.category-row').eq(categoryRowIndex);
-    if (categoryRow.length > 0) {
-      console.log('카테고리 행 삭제:', categoryRowIndex);
-      categoryRow.remove();
-    } else {
-      console.log('카테고리 행을 찾을 수 없음:', categoryRowIndex);
-    }
-    
-    // 라인 높이 업데이트
-    setTimeout(function() {
-      updateLineHeight();
-    }, 50);
-    
-    console.log('타임라인 카테고리 행 삭제 완료');
-  }
-
-  
-
-  // 타임라인 행들 숨기기 함수 (개선된 버전)
-  function hideTimelineRows(categoryIndex) {
-    console.log('타임라인 행 숨기기 시작:', categoryIndex);
-    
-    // 카테고리 이름 가져오기
-    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
-    console.log('카테고리 이름:', categoryName);
-    
-    // 카테고리 행은 숨기지 않고, 해당 카테고리의 이벤트 행들만 숨기기
-    // (사이드바와 동일한 동작: 카테고리 헤더는 남아있고 이벤트들만 숨김)
-    $('.timeline-row[data-category-name="' + categoryName + '"]').addClass('hidden');
-    console.log('카테고리', categoryName, '의 모든 이벤트 행 숨김 처리 (카테고리 행은 유지)');
-    
-    console.log('타임라인 행 숨기기 완료');
-  }
-
-  // 타임라인 행들 표시 함수 (개선된 버전)
-  function showTimelineRows(categoryIndex) {
-    console.log('타임라인 행 표시 시작:', categoryIndex);
-    
-    // 카테고리 이름 가져오기
-    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
-    console.log('카테고리 이름:', categoryName);
-    
-    // 카테고리 행은 항상 표시되어 있으므로, 해당 카테고리의 이벤트 행들만 표시
-    // (사이드바와 동일한 동작: 카테고리 헤더는 계속 보이고 이벤트들만 나타남)
-    $('.timeline-row[data-category-name="' + categoryName + '"]').removeClass('hidden');
-    console.log('카테고리', categoryName, '의 모든 이벤트 행 표시 처리 (카테고리 행은 항상 표시됨)');
-    
-    console.log('타임라인 행 표시 완료');
-  }
 
   // 새 스케줄 추가 함수
   function addNewSchedule(scheduleInfo, scheduleData) {
