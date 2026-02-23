@@ -509,19 +509,20 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
       },
       stop: function(event, ui) {
         $(this).removeClass('ui-resizable-resizing');
-        
+
         // 최종 크기와 위치에서의 날짜 계산 및 업데이트
         var finalDates = calculateProjectDatesFromResize($(this), ui.position.left, ui.size.width);
         var projectId = $(this).data('project-id');
-        
+
         console.log('프로젝트 리사이즈 완료:', {
           id: projectId,
           startDate: finalDates.startDate,
           endDate: finalDates.endDate
         });
-        
+
         // 사이드바의 프로젝트 정보도 업데이트
         updateSidebarProjectInfo($(this), finalDates);
+        markDirty();
       }
     });
     
@@ -542,21 +543,27 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
       },
       stop: function(event, ui) {
         $(this).removeClass('ui-draggable-dragging');
-        
+
         // 최종 위치에서의 날짜 계산 및 업데이트
         var finalDates = calculateProjectDates($(this), ui.position.left);
         var projectId = $(this).data('project-id');
-        
+
         console.log('프로젝트 이동 완료:', {
           id: projectId,
           startDate: finalDates.startDate,
           endDate: finalDates.endDate
         });
-        
+
         // 사이드바의 프로젝트 정보도 업데이트
         updateSidebarProjectInfo($(this), finalDates);
+        markDirty();
       }
     });
+
+    // 현재 읽기전용 모드이면 새로 생성된 바도 즉시 disable
+    if (typeof TL_STATE !== 'undefined' && !TL_STATE.isEditMode) {
+      $elements.draggable('disable').resizable('disable');
+    }
   }
 
   // 이벤트 드래그 앤 드롭 기능 초기화
@@ -568,6 +575,7 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
     
     // 이벤트 아이템에 드래그 기능 추가
     $(document).on('mousedown', '.project-item .event-content', function(e) {
+      if (!TL_STATE.isEditMode) return;
       // 편집 모드에서는 드래그 비활성화
       if ($(this).closest('.project-item').hasClass('editing')) {
         return;
@@ -812,6 +820,7 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
       // 6. 라인 높이 업데이트
       updateLineHeight();
       
+      markDirty();
       console.log('이벤트 이동 완료:', eventName);
     }
     
@@ -869,6 +878,7 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
       // 4. 라인 높이 업데이트
       updateLineHeight();
       
+      markDirty();
       console.log('이벤트 순서 변경 완료:', sourceEventName);
     }
     
@@ -937,6 +947,7 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
     
     // 카테고리 헤더에 드래그 기능 추가
     $(document).on('mousedown', '.category-header .category-title', function(e) {
+      if (!TL_STATE.isEditMode) return;
       // 편집 모드에서는 드래그 비활성화
       if ($(this).closest('.category-header').hasClass('editing')) {
         return;

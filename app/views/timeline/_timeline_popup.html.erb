@@ -146,3 +146,28 @@
     </div>
   </div>
 </div>
+
+<!-- 저장되지 않은 변경사항 확인 팝업 -->
+<div class="delete-confirm-popup-overlay" id="unsavedChangesPopup">
+  <div class="delete-confirm-popup">
+    <div class="delete-confirm-header">
+      <span class="delete-confirm-icon">⚠️</span>
+      저장되지 않은 변경사항
+    </div>
+    <div class="delete-confirm-message">
+      저장되지 않은 변경사항이 있습니다. 지금 저장하시겠습니까?
+    </div>
+    <div class="delete-confirm-buttons">
+      <button type="button" class="popup-btn popup-btn-secondary" id="unsavedCancelBtn">취소</button>
+      <button type="button" class="popup-btn popup-btn-primary" id="unsavedDiscardBtn">나중에 저장</button>
+      <button type="button" class="popup-btn popup-btn-primary" id="unsavedSaveBtn" style="background: #28a745;">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 타임라인 컨텍스트 메뉴 -->
+<div class="tl-context-menu" id="tlContextMenu">
+  <div class="tl-context-menu-item" data-action="add-schedule">📋 스케줄 추가</div>
+  <div class="tl-context-menu-item" data-action="edit-schedule">✏️ 스케줄 편집</div>
+  <div class="tl-context-menu-item danger" data-action="delete-schedule">🗑️ 스케줄 삭제</div>
+</div>

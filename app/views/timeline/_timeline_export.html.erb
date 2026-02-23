@@ -176,13 +176,18 @@
       setTimeout(function() {
         // 라인 높이 추가 업데이트
         //updateLineHeight();
-        
+
         // 스크롤 위치 복원 (오늘 날짜 위치)
         var todayPosition = Math.round((new Date() - TL_VIEWPORT.originDate) / (1000 * 60 * 60 * 24)) * TL_VIEWPORT.cellWidth;
         var timelineContainer = $('.timeline-main');
         var containerWidth = timelineContainer.width();
         var scrollLeft = Math.max(0, todayPosition - containerWidth * 0.2);
         timelineContainer.scrollLeft(scrollLeft);
+
+        // 현재 모드 재적용
+        if (typeof setEditMode === 'function') {
+          setEditMode(TL_STATE.isEditMode);
+        }
       }, 200);
   }
 
@@ -205,8 +210,9 @@
           return;
         }
         
-        importTimelineFromJSON(importData);        
-        
+        importTimelineFromJSON(importData);
+        markDirty();
+
         console.log('JSON 데이터 불러오기 완료');
         alert('타임라인 데이터가 성공적으로 불러와졌습니다.');
         
@@ -784,8 +790,9 @@
             }
             
             importTimelineFromJSON(importData);
-            
-            console.log('✅ 서버에서 타임라인 데이터 불러오기 완료');          
+            clearDirty();
+
+            console.log('✅ 서버에서 타임라인 데이터 불러오기 완료');
             //alert('서버에서 타임라인 데이터를 성공적으로 불러왔습니다.');
             
           } catch (error) {
@@ -817,11 +824,11 @@
     * 서버에 타임라인 데이터 저장 함수
     * 호환성: 기존 JSON 형식 유지 (timeline 미포함)
     */
-   function saveTimelineToServer(name = 'Default') {
+   function saveTimelineToServer(name = 'Default', skipConfirm = false) {
      console.log('서버에 타임라인 데이터 저장 시작');
-     
+
      // 확인 대화상자
-     if (!confirm('현재 타임라인 데이터를 서버에 저장하시겠습니까?')) {
+     if (!skipConfirm && !confirm('현재 타임라인 데이터를 서버에 저장하시겠습니까?')) {
        return;
      }
      
@@ -856,8 +863,9 @@
            }),
            success: function(response) {
              console.log('서버 저장 성공:', response);
+             clearDirty();
              alert('타임라인 데이터가 서버에 성공적으로 저장되었습니다.');
-             
+
              // 버튼 상태 복원
              saveBtn.html(originalText);
              saveBtn.prop('disabled', false);
