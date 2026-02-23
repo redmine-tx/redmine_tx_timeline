@@ -1102,8 +1102,8 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
       var sidebarElements = [sourceCategory[0]].concat(sourceEvents.toArray());
 
       if (insertBefore) {
-        // 역순 삽입으로 순서 유지: 마지막 이벤트부터 insertBefore
-        for (var i = sidebarElements.length - 1; i >= 0; i--) {
+        // 정순 삽입: 각 요소를 타겟 앞에 삽입하면 자연스럽게 올바른 순서 유지
+        for (var i = 0; i < sidebarElements.length; i++) {
           $(sidebarElements[i]).detach().insertBefore(targetCategory);
         }
       } else {
@@ -1160,8 +1160,8 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
       console.log('이동할 총 행 수:', sourceRows.length);
       
       if (insertBefore) {
-        // 타겟 카테고리 위에 삽입 (역순으로 삽입하여 순서 유지)
-        for (var i = sourceRows.length - 1; i >= 0; i--) {
+        // 타겟 카테고리 위에 삽입 (정순 삽입으로 순서 유지)
+        for (var i = 0; i < sourceRows.length; i++) {
           $(sourceRows[i]).detach().insertBefore(targetCategoryRow);
         }
         console.log('타겟 카테고리 위에 삽입 완료');
