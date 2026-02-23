@@ -110,6 +110,7 @@
   flex: 1;
   overflow-y: auto; /* 사이드바 내용 부분만 스크롤 */
   overflow-x: hidden;
+  position: relative; /* 갭 인디케이터의 containing block */
 }
 
 .timeline-main {
@@ -566,52 +567,69 @@
   opacity: 0.5;
 }
 
-.category-header.drag-helper {
+/* 드래그 중인 카테고리 그룹 전체 (사이드바+타임라인) */
+.category-header.category-group-dragging,
+.project-item.category-group-dragging,
+.timeline-row.category-group-dragging {
+  opacity: 0.4;
+  background: repeating-linear-gradient(
+    -45deg, transparent, transparent 4px,
+    rgba(33,150,243,0.08) 4px, rgba(33,150,243,0.08) 8px
+  ) !important;
+}
+
+/* 사이드바 갭 삽입 인디케이터 */
+.category-gap-indicator {
   position: absolute;
-  z-index: 1001;
-  background: #d1ecf1;
-  border: 1px solid #bee5eb;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-  border-radius: 4px;
-  padding: 8px 15px;
-  font-size: 11px;
-  font-weight: bold;
-  color: #0c5460;
+  left: 4px; right: 4px;
+  height: 3px;
+  background: #0d6efd;
+  border-radius: 2px;
+  z-index: 1000;
   pointer-events: none;
+  box-shadow: 0 0 6px rgba(13,110,253,0.5);
+  display: none;
 }
-
-.category-header.category-drop-zone {
-  position: relative;
+.category-gap-indicator::before,
+.category-gap-indicator::after {
+  content: ""; position: absolute; top: -3px;
+  width: 9px; height: 9px;
+  background: #0d6efd; border-radius: 50%;
 }
+.category-gap-indicator::before { left: -4px; }
+.category-gap-indicator::after { right: -4px; }
 
-.category-header.category-drop-zone-hover {
-  background: #b8daff !important;
-  border: 2px solid #0056b3 !important;
-  color: #004085 !important;
-  box-shadow: 0 2px 4px rgba(0, 86, 179, 0.2);
-}
-
-/* 카테고리 드롭 위치 표시 */
-.category-header.drop-before::before {
-  content: "";
+/* 타임라인 갭 삽입 인디케이터 */
+.timeline-gap-indicator {
   position: absolute;
-  top: -2px;
-  left: 0;
-  right: 0;
+  left: 0; right: 0;
   height: 3px;
-  background: #0056b3;
+  background: #0d6efd;
   z-index: 1000;
+  pointer-events: none;
+  box-shadow: 0 0 6px rgba(13,110,253,0.5);
+  display: none;
 }
 
-.category-header.drop-after::after {
-  content: "";
+/* 개선된 드래그 헬퍼 */
+.category-drag-helper {
   position: absolute;
-  bottom: -2px;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: #0056b3;
-  z-index: 1000;
+  z-index: 10001;
+  background: #d1ecf1;
+  border: 2px solid #0c5460;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  border-radius: 8px;
+  padding: 10px 16px;
+  pointer-events: none;
+  min-width: 160px;
+}
+.category-drag-helper .drag-helper-title {
+  font-size: 12px; font-weight: bold;
+  color: #0c5460; text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.category-drag-helper .drag-helper-meta {
+  font-size: 11px; color: #17a2b8; margin-top: 2px;
 }
 
 /* 카테고리 타이틀 드래그 커서 */

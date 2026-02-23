@@ -964,24 +964,76 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
       // 전역 마우스 이벤트 추가
       $(document).on('mousemove.categoryDrag', handleCategoryMouseMove);
       $(document).on('mouseup.categoryDrag', handleCategoryMouseUp);
+      $(document).on('keydown.categoryDrag', handleCategoryKeyDown);
       
       e.preventDefault();
     });
     
+    // 드래그 중 자동 스크롤 (상/하단 가장자리)
+    var autoScrollTimer = null;
+
+    function startAutoScroll(speed) {
+      stopAutoScroll();
+      var $sc = $('.sidebar-content');
+      autoScrollTimer = setInterval(function() {
+        var oldTop = $sc.scrollTop();
+        $sc.scrollTop(oldTop + speed);
+        // 스크롤이 실제로 변했으면 갭 재계산 + 인디케이터 갱신
+        if ($sc.scrollTop() !== oldTop && categoryDragData && categoryDragData.isDragging) {
+          var gapData = computeCategoryGaps(categoryDragData.categoryIndex);
+          categoryDragData.gaps = gapData.gaps;
+          categoryDragData.sourceBounds = gapData.sourceBounds;
+          // 마지막 마우스 위치로 인디케이터 갱신
+          if (categoryDragData.lastMouseEvent) {
+            updateCategoryDropZones(categoryDragData.lastMouseEvent);
+          }
+        }
+      }, 16); // ~60fps
+    }
+
+    function stopAutoScroll() {
+      if (autoScrollTimer) { clearInterval(autoScrollTimer); autoScrollTimer = null; }
+    }
+
+    function updateAutoScroll(e) {
+      var $sc = $('.sidebar-content');
+      var scOffset = $sc.offset();
+      var scHeight = $sc.outerHeight();
+      var edgeZone = 40; // 가장자리 감지 영역 (px)
+      var mouseY = e.pageY;
+
+      var distFromTop = mouseY - scOffset.top;
+      var distFromBottom = (scOffset.top + scHeight) - mouseY;
+
+      if (distFromTop < edgeZone && distFromTop >= 0) {
+        // 상단 가장자리: 위로 스크롤 (가까울수록 빠르게)
+        var intensity = 1 - (distFromTop / edgeZone);
+        startAutoScroll(-Math.round(2 + intensity * 8));
+      } else if (distFromBottom < edgeZone && distFromBottom >= 0) {
+        // 하단 가장자리: 아래로 스크롤
+        var intensity = 1 - (distFromBottom / edgeZone);
+        startAutoScroll(Math.round(2 + intensity * 8));
+      } else {
+        stopAutoScroll();
+      }
+    }
+
     function handleCategoryMouseMove(e) {
       if (!categoryDragData) return;
-      
+
       var deltaX = Math.abs(e.pageX - categoryDragData.startX);
       var deltaY = Math.abs(e.pageY - categoryDragData.startY);
-      
+
       // 드래그 시작 임계값 확인
       if (!categoryDragData.isDragging && (deltaX > 5 || deltaY > 5)) {
         startCategoryDrag(e);
       }
-      
+
       if (categoryDragData.isDragging) {
+        categoryDragData.lastMouseEvent = e;
         updateCategoryDragPosition(e);
         updateCategoryDropZones(e);
+        updateAutoScroll(e);
       }
     }
     
@@ -989,33 +1041,163 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
       if (categoryDragData && categoryDragData.isDragging) {
         finishCategoryDrag(e);
       }
-      
+
       // 전역 이벤트 제거
       $(document).off('mousemove.categoryDrag');
       $(document).off('mouseup.categoryDrag');
-      
+      $(document).off('keydown.categoryDrag');
+
       categoryDragData = null;
     }
-    
-    function startCategoryDrag(e) {
-      console.log('카테고리 드래그 시작:', categoryDragData.categoryName);
-      
-      categoryDragData.isDragging = true;
-      categoryDragData.categoryHeader.addClass('dragging');
-      
-      // 드래그 헬퍼 생성 (XSS-safe)
-      categoryDragHelper = $('<div class="category-header drag-helper">');
-      var $catLeft = $('<div class="category-left">');
-      $catLeft.append($('<span class="category-title">').text(categoryDragData.categoryName));
-      categoryDragHelper.append($catLeft);
-      
-      $('body').append(categoryDragHelper);
-      updateCategoryDragPosition(e);
-      
-      // 드롭 존 활성화 - 다른 카테고리들을 드롭 존으로 설정
-      $('.category-header').not(categoryDragData.categoryHeader).addClass('category-drop-zone');
+
+    function handleCategoryKeyDown(e) {
+      if (e.key === 'Escape' && categoryDragData && categoryDragData.isDragging) {
+        cleanupCategoryDrag();
+        $(document).off('mousemove.categoryDrag');
+        $(document).off('mouseup.categoryDrag');
+        $(document).off('keydown.categoryDrag');
+        categoryDragData = null;
+      }
     }
     
+    // 갭 기반 삽입: 카테고리 그룹 경계에 갭 계산
+    // 반환: { gaps: [...], sourceBounds: { top, bottom } }
+    function computeCategoryGaps(sourceCategoryIndex) {
+      var gaps = [];
+      var categoryGroups = [];
+      var $sc = $('.sidebar-content');
+      var scOffsetTop = $sc.offset().top;
+      var scScrollTop = $sc.scrollTop();
+
+      $sc.find('.category-header').each(function() {
+        var $h = $(this);
+        var idx = $h.data('category-index');
+        var $events = $('.project-item[data-category-index="' + idx + '"]').not('.hidden');
+        // offset() 기반: 페이지 좌표에서 컨테이너 좌표로 변환 + 스크롤 보정 → 콘텐츠 좌표
+        var top = $h.offset().top - scOffsetTop + scScrollTop;
+        var lastEl = $events.length > 0 ? $events.last() : $h;
+        var bottom = lastEl.offset().top - scOffsetTop + scScrollTop + lastEl.outerHeight();
+        categoryGroups.push({ idx: idx, header: $h, top: top, bottom: bottom });
+      });
+
+      // 소스 카테고리 인덱스 찾기
+      var srcGroupIdx = -1;
+      for (var i = 0; i < categoryGroups.length; i++) {
+        if (categoryGroups[i].idx === sourceCategoryIndex) { srcGroupIdx = i; break; }
+      }
+
+      // 소스 그룹의 시각적 영역 (noop 존으로 사용)
+      var sourceBounds = srcGroupIdx >= 0 ? {
+        top: categoryGroups[srcGroupIdx].top,
+        bottom: categoryGroups[srcGroupIdx].bottom
+      } : null;
+
+      // 갭 생성: 소스 인접 갭은 isNoop (자기 위치 = 이동 없음)
+      for (var i = 0; i <= categoryGroups.length; i++) {
+        var isNoop = (i === srcGroupIdx || i === srcGroupIdx + 1);
+
+        var yCenter;
+        if (i === 0) {
+          yCenter = categoryGroups[0].top;
+        } else if (i === categoryGroups.length) {
+          yCenter = categoryGroups[categoryGroups.length - 1].bottom;
+        } else {
+          yCenter = (categoryGroups[i - 1].bottom + categoryGroups[i].top) / 2;
+        }
+
+        var targetHeader, insertBefore;
+        if (i < categoryGroups.length) {
+          targetHeader = categoryGroups[i].header;
+          insertBefore = true;
+        } else {
+          targetHeader = categoryGroups[categoryGroups.length - 1].header;
+          insertBefore = false;
+        }
+
+        gaps.push({ yCenter: yCenter, targetHeader: targetHeader, insertBefore: insertBefore, isNoop: isNoop });
+      }
+
+      return { gaps: gaps, sourceBounds: sourceBounds };
+    }
+
+    // 마우스 Y 좌표로 가장 가까운 갭 찾기
+    // sourceBounds: 소스 그룹의 시각적 영역. 이 안이면 noop, 밖이면 방향 기반 검색.
+    function findNearestGap(mouseY, gaps, sourceBounds) {
+      var $sc = $('.sidebar-content');
+      var localY = mouseY - $sc.offset().top + $sc.scrollTop();
+
+      // 마우스가 소스 그룹 시각 영역 내 → 이동 없음
+      if (sourceBounds && localY >= sourceBounds.top && localY <= sourceBounds.bottom) {
+        return { isNoop: true };
+      }
+
+      // 소스 영역 밖 → 이동 방향의 실제(non-noop) 갭만 검색
+      var isBelow = sourceBounds && localY > sourceBounds.bottom;
+      var isAbove = sourceBounds && localY < sourceBounds.top;
+
+      var nearest = null, minDist = Infinity;
+      for (var i = 0; i < gaps.length; i++) {
+        if (gaps[i].isNoop) continue;
+        // 아래로 드래그 → 소스 위의 갭 제외, 위로 드래그 → 소스 아래의 갭 제외
+        if (isBelow && gaps[i].yCenter < sourceBounds.bottom) continue;
+        if (isAbove && gaps[i].yCenter > sourceBounds.top) continue;
+
+        var d = Math.abs(localY - gaps[i].yCenter);
+        if (d < minDist) { minDist = d; nearest = gaps[i]; }
+      }
+      return nearest;
+    }
+
+    // 사이드바 갭에 대응하는 타임라인 Y 좌표 계산
+    function computeTimelineGapY(gap) {
+      var $tb = $('.timeline-body');
+      var tbOffsetTop = $tb.offset().top;
+      var tbScrollTop = $tb.scrollTop();
+      var targetName = gap.targetHeader.find('.category-title').text().trim();
+      if (gap.insertBefore) {
+        var $tlRow = $('.timeline-row.category-row[data-category-name="' + targetName + '"]');
+        if ($tlRow.length > 0) return $tlRow.offset().top - tbOffsetTop + tbScrollTop;
+        return 0;
+      } else {
+        var $allRows = $('.timeline-row[data-category-name="' + targetName + '"]');
+        var $lastRow = $allRows.last();
+        if ($lastRow.length > 0) return $lastRow.offset().top - tbOffsetTop + tbScrollTop + $lastRow.outerHeight();
+        return 0;
+      }
+    }
+
+    function startCategoryDrag(e) {
+      categoryDragData.isDragging = true;
+      var srcIdx = categoryDragData.categoryIndex;
+      var srcName = categoryDragData.categoryName;
+
+      // 1. 소스 그룹 전체에 .category-group-dragging 적용
+      categoryDragData.categoryHeader.addClass('category-group-dragging');
+      $('.project-item[data-category-index="' + srcIdx + '"]')
+        .addClass('category-group-dragging');
+      $('.timeline-row[data-category-name="' + srcName + '"]')
+        .addClass('category-group-dragging');
+
+      // 2. 개선된 드래그 헬퍼 (카테고리명 + 이벤트 수)
+      var eventCount = $('.project-item[data-category-index="' + srcIdx + '"]').length;
+      categoryDragHelper = $('<div class="category-drag-helper">');
+      categoryDragHelper.append($('<div class="drag-helper-title">').text(srcName));
+      categoryDragHelper.append(
+        $('<div class="drag-helper-meta">').text(eventCount + '개 이벤트')
+      );
+      $('body').append(categoryDragHelper);
+      updateCategoryDragPosition(e);
+
+      // 3. 갭 계산 + 인디케이터 생성
+      var gapData = computeCategoryGaps(srcIdx);
+      categoryDragData.gaps = gapData.gaps;
+      categoryDragData.sourceBounds = gapData.sourceBounds;
+      categoryDragData.$sidebarIndicator =
+        $('<div class="category-gap-indicator">').appendTo('.sidebar-content');
+      categoryDragData.$timelineIndicator =
+        $('<div class="timeline-gap-indicator">').appendTo('.timeline-body');
+    }
+
     function updateCategoryDragPosition(e) {
       if (categoryDragHelper) {
         categoryDragHelper.css({
@@ -1024,63 +1206,50 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
         });
       }
     }
-    
+
     function updateCategoryDropZones(e) {
-      // 현재 마우스 위치의 드롭 존 찾기
-      var dropTarget = $(e.target).closest('.category-header.category-drop-zone');
-      
-      // 모든 드롭 존에서 hover 효과 제거
-      $('.category-header.category-drop-zone').removeClass('category-drop-zone-hover');
-      
-      // 현재 위치의 드롭 존에 hover 효과 추가
-      if (dropTarget.length > 0) {
-        dropTarget.addClass('category-drop-zone-hover');
-        
-        // 드롭 위치 표시 (위/아래)
-        var dropY = e.pageY - dropTarget.offset().top;
-        var dropHeight = dropTarget.outerHeight();
-        
-        if (dropY < dropHeight / 2) {
-          dropTarget.removeClass('drop-after').addClass('drop-before');
-        } else {
-          dropTarget.removeClass('drop-before').addClass('drop-after');
-        }
+      var gap = findNearestGap(e.pageY, categoryDragData.gaps, categoryDragData.sourceBounds);
+      categoryDragData.currentGap = gap;
+
+      if (gap && !gap.isNoop) {
+        // 실제 이동 갭: 인디케이터 표시
+        categoryDragData.$sidebarIndicator.css({
+          top: gap.yCenter + 'px', display: 'block'
+        });
+        var tlY = computeTimelineGapY(gap);
+        categoryDragData.$timelineIndicator.css({
+          top: tlY + 'px', display: 'block'
+        });
+      } else {
+        // 자기 위치(noop) 또는 갭 없음: 인디케이터 숨김
+        categoryDragData.$sidebarIndicator.hide();
+        categoryDragData.$timelineIndicator.hide();
       }
     }
-    
+
     function finishCategoryDrag(e) {
-      console.log('카테고리 드래그 완료');
-      
-      // 드롭 타겟 찾기
-      var dropTarget = $(e.target).closest('.category-header.category-drop-zone');
-      
-      if (dropTarget.length > 0) {
-        var targetIndex = dropTarget.data('category-index');
-        
-        // 드롭 위치 확인 (위/아래)
-        var dropY = e.pageY - dropTarget.offset().top;
-        var dropHeight = dropTarget.outerHeight();
-        var insertBefore = dropY < dropHeight / 2;
-        
+      var gap = categoryDragData.currentGap;
+      if (gap && !gap.isNoop) {
         try {
-          reorderCategory(categoryDragData.categoryHeader, dropTarget, insertBefore);
+          reorderCategory(categoryDragData.categoryHeader, gap.targetHeader, gap.insertBefore);
         } catch (error) {
-          console.error('카테고리 순서 변경 중 오류 발생:', error);
-          alert('카테고리 순서 변경 중 오류가 발생했습니다. 페이지를 새로고침해주세요.');
+          console.error('카테고리 순서 변경 중 오류:', error);
         }
       }
-      
-      // 정리
       cleanupCategoryDrag();
     }
-    
+
     function cleanupCategoryDrag() {
-      if (categoryDragHelper) {
-        categoryDragHelper.remove();
-        categoryDragHelper = null;
-      }
-      
-      $('.category-header').removeClass('dragging category-drop-zone category-drop-zone-hover drop-before drop-after');
+      stopAutoScroll();
+      if (categoryDragHelper) { categoryDragHelper.remove(); categoryDragHelper = null; }
+      if (categoryDragData && categoryDragData.$sidebarIndicator) categoryDragData.$sidebarIndicator.remove();
+      if (categoryDragData && categoryDragData.$timelineIndicator) categoryDragData.$timelineIndicator.remove();
+
+      $('.category-group-dragging').removeClass('category-group-dragging');
+      // 기존 클래스 안전 정리
+      $('.category-header').removeClass(
+        'dragging category-drop-zone category-drop-zone-hover drop-before drop-after'
+      );
     }
     
     // 카테고리 순서 변경 함수
