@@ -58,7 +58,10 @@ today_position = (Date.today - start_date).to_i * cell_width
   <!-- 사이드바 -->
   <div class="timeline-sidebar">
     <div class="sidebar-header">
-      <div class="sidebar-title">프로젝트 타임라인</div>
+      <div class="sidebar-title">
+        프로젝트 타임라인
+        <button class="add-category-btn" id="addCategoryBtn" title="카테고리 추가">+</button>
+      </div>
       <% if User.current.allowed_to?(:edit_timeline, @project) %>
       <div class="edit-mode-toggle">
         <span class="toggle-label">편집</span>
@@ -68,9 +71,6 @@ today_position = (Date.today - start_date).to_i * cell_width
         </label>
       </div>
       <% end %>
-      <button class="add-category-btn" id="addCategoryBtn" title="카테고리 추가">
-        +
-      </button>
     </div>
     
     <div class="sidebar-content">

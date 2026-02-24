@@ -484,12 +484,57 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
     applyDraggableToElements($('.project-bar'));
   }
 
+  // 바의 중심 Y 좌표로 대상 이벤트 행을 찾음 (카테고리 행 제외)
+  function findTargetTimelineRow(barCenterY) {
+    var $tb = $('.timeline-body');
+    var tbOffset = $tb.offset().top;
+    var tbScroll = $tb.scrollTop();
+    var result = null;
+
+    $('.timeline-row').not('.category-row').each(function() {
+      var $row = $(this);
+      var rowTop = $row.offset().top - tbOffset + tbScroll;
+      var rowBottom = rowTop + $row.outerHeight();
+      if (barCenterY >= rowTop && barCenterY < rowBottom) {
+        result = $row;
+        return false;
+      }
+    });
+    return result;
+  }
+
+  // 스케줄 바를 다른 행으로 이동 + 양쪽 사이드바 정보 갱신
+  function moveScheduleBarToRow($bar, $sourceRow, $targetRow) {
+    // 1. 바를 타겟 행으로 이동
+    $bar.detach().appendTo($targetRow);
+    $bar.css('top', '2px');
+
+    // 2. 양쪽 행의 z-index 재정리
+    [$sourceRow, $targetRow].forEach(function($row) {
+      $row.find('.project-bar').each(function(idx) {
+        $(this).css('z-index', 101 + idx);
+        $(this).attr('data-schedule-index', idx);
+      });
+    });
+
+    // 3. 양쪽 사이드바 스케줄 카운트 갱신
+    var srcEventName = $sourceRow.attr('data-event-name');
+    var srcCatName = $sourceRow.attr('data-category-name');
+    var tgtEventName = $targetRow.attr('data-event-name');
+    var tgtCatName = $targetRow.attr('data-category-name');
+
+    updateProjectInfo(srcEventName, srcCatName);
+    updateProjectInfo(tgtEventName, tgtCatName);
+
+    markDirty();
+  }
+
   // 프로젝트 바 요소들에 드래그/리사이즈 기능 적용
   function applyDraggableToElements($elements) {
     if (!$elements || $elements.length === 0) return;
-    
+
     console.log('드래그/리사이즈 기능 적용 대상:', $elements.length, '개 요소');
-    
+
     // 리사이즈 기능 추가 (양쪽 끝 드래그로 크기 조정)
     $elements.resizable({
       handles: 'e, w', // 동쪽(우측), 서쪽(좌측) 핸들만 활성화
@@ -524,24 +569,58 @@ function generateGridLinesHtml(startDate, numDays, pixelOffset) {
         markDirty();
       }
     });
-    
-    // 드래그 기능 추가 (중앙 부분 드래그로 이동)
+
+    // 드래그 기능 추가 (중앙 부분 드래그로 이동, 위아래 자유 이동 허용)
     $elements.draggable({
-      axis: 'x', // x축으로만 드래그 가능
-      grid: [<%= cell_width %>, 0], // 일 단위로 스냅
+      grid: [<%= cell_width %>, 1], // X는 날짜 스냅, Y는 자유
       containment: '.timeline-body', // 타임라인 영역 내에서만 드래그 가능
       cancel: '.ui-resizable-handle', // 리사이즈 핸들에서는 드래그 비활성화
       start: function(event, ui) {
         $(this).addClass('ui-draggable-dragging');
         // 시작 위치 저장
         $(this).data('startLeft', ui.position.left);
+        $(this).data('startTop', ui.position.top);
+        $(this).data('sourceRow', $(this).closest('.timeline-row'));
       },
       drag: function(event, ui) {
         // 드래그 중 위치에 따른 날짜 업데이트
         updateProjectDates($(this), ui.position.left);
+
+        // 타겟 행 하이라이트
+        if (TL_STATE.isEditMode) {
+          var $sourceRow = $(this).data('sourceRow');
+          var barH = $(this).outerHeight();
+          var rowTop = $sourceRow.offset().top;
+          var barAbsY = rowTop + ui.position.top + barH / 2;
+          var $tb = $('.timeline-body');
+          var barContentY = barAbsY - $tb.offset().top + $tb.scrollTop();
+          var $target = findTargetTimelineRow(barContentY);
+
+          $('.timeline-row.schedule-row-target').removeClass('schedule-row-target');
+          if ($target && $target[0] !== $sourceRow[0]) {
+            $target.addClass('schedule-row-target');
+          }
+        }
       },
       stop: function(event, ui) {
         $(this).removeClass('ui-draggable-dragging');
+        $('.timeline-row.schedule-row-target').removeClass('schedule-row-target');
+
+        var $sourceRow = $(this).data('sourceRow');
+        var barH = $(this).outerHeight();
+        var rowTop = $sourceRow.offset().top;
+        var barAbsY = rowTop + ui.position.top + barH / 2;
+        var $tb = $('.timeline-body');
+        var barContentY = barAbsY - $tb.offset().top + $tb.scrollTop();
+        var $targetRow = findTargetTimelineRow(barContentY);
+
+        if (TL_STATE.isEditMode && $targetRow && $targetRow[0] !== $sourceRow[0]) {
+          // 다른 행으로 이동
+          moveScheduleBarToRow($(this), $sourceRow, $targetRow);
+        } else {
+          // 같은 행: 기존 동작 (날짜만 변경, top 복원)
+          $(this).css('top', '2px');
+        }
 
         // 최종 위치에서의 날짜 계산 및 업데이트
         var finalDates = calculateProjectDates($(this), ui.position.left);

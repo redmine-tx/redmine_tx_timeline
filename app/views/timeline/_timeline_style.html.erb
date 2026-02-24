@@ -225,6 +225,9 @@
 
 .sidebar-title {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .add-category-btn {
@@ -1839,6 +1842,11 @@ body.schedule-drawing .project-bar {
 
 .tl-context-menu-item.danger { color: #dc3545; }
 .tl-context-menu-item.danger:hover { background: #fff5f5; }
+
+/* 스케줄 바 드래그 시 타겟 행 하이라이트 */
+.timeline-row.schedule-row-target {
+  background-color: rgba(13, 110, 253, 0.08) !important;
+}
 
 /* ========== 읽기전용 모드 오버라이드 ========== */
 .timeline-container.timeline-readonly .add-category-btn,
