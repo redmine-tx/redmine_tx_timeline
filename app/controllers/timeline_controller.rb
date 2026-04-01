@@ -186,11 +186,13 @@ class TimelineController < ApplicationController
 
     timeline_data.categories.map.with_index do |category, index|
       {
+        id: category['id'],
         name: category['name'] || '미분류',
         index: index,
         customColor: category['customColor'],
         events: (category['events'] || []).map do |event|
           {
+            id: event['id'],
             name: event['name'] || '이름 없음',
             schedules: (event['schedules'] || []).map do |schedule|
               format_schedule(schedule, done_ratios)
@@ -210,6 +212,7 @@ class TimelineController < ApplicationController
       done_ratio = issue_id.present? ? done_ratios[issue_id.to_i] : nil
 
       {
+        id: schedule['id'],
         name: schedule['name'] || '일정 없음',
         startDate: start_date&.strftime('%Y-%m-%d'),
         endDate: end_date&.strftime('%Y-%m-%d'),
@@ -220,6 +223,7 @@ class TimelineController < ApplicationController
     rescue => e
       Rails.logger.warn "스케줄 파싱 오류: #{e.message}, 스케줄: #{schedule}"
       {
+        id: schedule['id'],
         name: schedule['name'] || '일정 없음',
         startDate: nil,
         endDate: nil,

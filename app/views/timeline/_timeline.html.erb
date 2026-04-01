@@ -216,6 +216,7 @@ var TL_STATE = {
     category: {},
     schedule: {}
   },
+  timeline: null,
   currentTimelineName: 'Default',
   editing: {
     category: null,
@@ -223,7 +224,10 @@ var TL_STATE = {
     scheduleBar: null,
     colorTarget: null,
     selectedColor: TL_CONST.DEFAULT_COLOR,
-    deletingCategoryIndex: null
+    deletingCategoryId: null
+  },
+  ui: {
+    collapsedCategoryIds: {}
   },
   scroll: {
     isSyncing: false,
@@ -293,7 +297,7 @@ var currentEditingScheduleBar = null;
 var currentColorEditingTarget = null;
 var selectedColor = TL_CONST.DEFAULT_COLOR;
 var dragThreshold = TL_CONST.DRAG_THRESHOLD;
-var deletingCategoryIndex = null;
+var deletingCategoryId = null;
 var isScrollSyncing = false;
 var syncAnimationFrame = null;
 var lastSyncTime = 0;
@@ -314,6 +318,8 @@ window.initialTimelineData = <%= json_escape(all_timelines_data.to_json).html_sa
 function initializeScrollSync() {
   var $sidebar = $('.sidebar-content');
   var $timeline = $('.timeline-body');
+  var $main = $('.timeline-main');
+  if (!$sidebar.length || !$timeline.length || !$main.length) return;
 
   // 수평 스크롤바로 인한 높이 차이를 보정하여 스크롤 범위를 일치시킴
   function equalizeScrollRanges() {
@@ -331,26 +337,80 @@ function initializeScrollSync() {
     }
   }
 
+  function getMaxScrollTop(element) {
+    return Math.max(0, element.scrollHeight - element.clientHeight);
+  }
+
+  function normalizeWheelDelta(delta, deltaMode, element) {
+    if (deltaMode === 1) return delta * 16;
+    if (deltaMode === 2) return delta * element.clientHeight;
+    return delta;
+  }
+
+  function syncVerticalScroll(nextScrollTop) {
+    var maxScrollTop = Math.min(getMaxScrollTop($sidebar[0]), getMaxScrollTop($timeline[0]));
+    var clampedScrollTop = Math.max(0, Math.min(nextScrollTop, maxScrollTop));
+
+    if (Math.abs($sidebar[0].scrollTop - clampedScrollTop) > 0.5) {
+      $sidebar[0].scrollTop = clampedScrollTop;
+    }
+    if (Math.abs($timeline[0].scrollTop - clampedScrollTop) > 0.5) {
+      $timeline[0].scrollTop = clampedScrollTop;
+    }
+  }
+
   equalizeScrollRanges();
-  $(window).on('resize', equalizeScrollRanges);
+  $(window).off('resize.timelineScrollSync').on('resize.timelineScrollSync', equalizeScrollRanges);
 
   // 동기식 스크롤 동기화 - requestAnimationFrame 없이 즉시 반영
   // scrollTop 대입이 상대쪽 scroll 이벤트를 동기적으로 발생시키므로
   // isSyncing 플래그만으로 피드백 루프를 차단할 수 있음
   var isSyncing = false;
 
-  $sidebar.on('scroll', function() {
+  $sidebar.off('scroll.timelineScrollSync').on('scroll.timelineScrollSync', function() {
     if (isSyncing) return;
     isSyncing = true;
-    $timeline[0].scrollTop = this.scrollTop;
+    syncVerticalScroll(this.scrollTop);
     isSyncing = false;
   });
 
-  $timeline.on('scroll', function() {
+  $timeline.off('scroll.timelineScrollSync').on('scroll.timelineScrollSync', function() {
     if (isSyncing) return;
     isSyncing = true;
-    $sidebar[0].scrollTop = this.scrollTop;
+    syncVerticalScroll(this.scrollTop);
     isSyncing = false;
+  });
+
+  function handleSyncedWheel(e) {
+    var hasVerticalDelta = Math.abs(e.deltaY) > 0;
+    var hasHorizontalDelta = Math.abs(e.deltaX) > 0;
+    if (!hasVerticalDelta && !hasHorizontalDelta) return;
+
+    if (hasVerticalDelta || hasHorizontalDelta) {
+      e.preventDefault();
+    }
+
+    if (hasHorizontalDelta) {
+      $main[0].scrollLeft += normalizeWheelDelta(e.deltaX, e.deltaMode, $main[0]);
+    }
+
+    if (!hasVerticalDelta) return;
+
+    var sourceElement = e.currentTarget;
+    var nextScrollTop = sourceElement.scrollTop + normalizeWheelDelta(e.deltaY, e.deltaMode, sourceElement);
+
+    isSyncing = true;
+    syncVerticalScroll(nextScrollTop);
+    isSyncing = false;
+  }
+
+  [$sidebar[0], $timeline[0]].forEach(function(element) {
+    if (!element) return;
+    if (element.__timelineSyncedWheelHandler) {
+      element.removeEventListener('wheel', element.__timelineSyncedWheelHandler);
+    }
+    element.__timelineSyncedWheelHandler = handleSyncedWheel;
+    element.addEventListener('wheel', handleSyncedWheel, { passive: false });
   });
 }
 
@@ -470,24 +530,23 @@ function registerEventHandlers() {
     if (!TL_STATE.isEditMode) return;
 
     var categoryHeader = $(this).closest('.category-header');
-    var categoryIndex = categoryHeader.data('category-index');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
+    var categoryId = categoryHeader.data('category-id');
+    var category = findCategoryById(categoryId);
+    if (!category) return;
 
     currentColorEditingTarget = {
       type: 'category',
-      categoryName: categoryName,
-      categoryIndex: categoryIndex,
-      categoryHeader: categoryHeader
+      categoryId: categoryId
     };
 
     $('#colorPickerTitle').text('카테고리 편집');
-    $('#colorPickerTargetName').text(categoryName);
+    $('#colorPickerTargetName').text(category.name);
 
     // 이름 입력 필드 표시 및 값 설정
     $('#colorPickerNameSection').show();
-    $('#colorPickerNameInput').val(categoryName);
+    $('#colorPickerNameInput').val(category.name);
 
-    var currentColor = categoryColors[categoryName] || '#6c757d';
+    var currentColor = getCategoryColor(categoryId) || TL_CONST.DEFAULT_COLOR;
     selectedColor = currentColor;
     updateColorSelection(currentColor);
 
@@ -502,13 +561,15 @@ function registerEventHandlers() {
     if (!TL_STATE.isEditMode) return;
 
     var categoryHeader = $(this).closest('.category-header');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
-    deletingCategoryIndex = categoryHeader.data('category-index');
+    var categoryId = categoryHeader.data('category-id');
+    var category = findCategoryById(categoryId);
+    if (!category) return;
+    deletingCategoryId = categoryId;
     
-    if (confirm('"' + categoryName + '" 카테고리와 모든 하위 이벤트를 삭제하시겠습니까?')) {
+    if (confirm('"' + category.name + '" 카테고리와 모든 하위 이벤트를 삭제하시겠습니까?')) {
       confirmCategoryDelete();
     } else {
-      deletingCategoryIndex = null;
+      deletingCategoryId = null;
     }
   });
 
@@ -518,20 +579,22 @@ function registerEventHandlers() {
     e.stopPropagation();
     
     var categoryHeader = $(this).closest('.category-header');
-    var categoryIndex = categoryHeader.data('category-index');
+    var categoryId = categoryHeader.data('category-id');
     var isCollapsed = categoryHeader.hasClass('category-collapsed');
     
     if (isCollapsed) {
       categoryHeader.removeClass('category-collapsed');
       $(this).removeClass('collapsed').text('▼');
-      $('.project-item[data-category-index="' + categoryIndex + '"]').removeClass('hidden').show();
-      showTimelineRows(categoryIndex);
+      setCategoryCollapsed(categoryId, false);
+      $('.project-item[data-category-id="' + categoryId + '"]').removeClass('hidden').show();
+      showTimelineRows(categoryId);
       setTimeout(function() { updateLineHeight(); }, 50);
     } else {
       categoryHeader.addClass('category-collapsed');
       $(this).addClass('collapsed').text('▶');
-      $('.project-item[data-category-index="' + categoryIndex + '"]').addClass('hidden');
-      hideTimelineRows(categoryIndex);
+      setCategoryCollapsed(categoryId, true);
+      $('.project-item[data-category-id="' + categoryId + '"]').addClass('hidden');
+      hideTimelineRows(categoryId);
       setTimeout(function() { updateLineHeight(); }, 50);
     }
   });
@@ -547,11 +610,12 @@ function registerEventHandlers() {
     if (!TL_STATE.isEditMode) return;
 
     var categoryHeader = $(this).closest('.category-header');
-    var categoryIndex = categoryHeader.data('category-index');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
+    var categoryId = categoryHeader.data('category-id');
+    var category = findCategoryById(categoryId);
+    if (!category) return;
     
-    currentEditingCategory = { index: categoryIndex, name: categoryName };
-    $('#eventCategoryName').text(categoryName);
+    currentEditingCategory = { id: categoryId };
+    $('#eventCategoryName').text(category.name);
     $('#eventName').val('');
     $('#eventPopup').addClass('show');
     
@@ -587,7 +651,7 @@ function registerEventHandlers() {
       return;
     }
     
-    addNewEvent(currentEditingCategory.index, { name: eventName });
+    addNewEvent(currentEditingCategory.id, { name: eventName });
     hideEventPopup();
   });
 
@@ -675,46 +739,33 @@ function registerEventHandlers() {
 
   // 카테고리 삭제 확인 함수
   function confirmCategoryDelete() {
-    if (deletingCategoryIndex === null) return;
+    if (!deletingCategoryId) return;
 
-    var categoryHeader = $('.category-header[data-category-index="' + deletingCategoryIndex + '"]');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
+    var context = findCategoryContextById(deletingCategoryId);
+    if (!context) {
+      deletingCategoryId = null;
+      return;
+    }
 
-    console.log('카테고리 삭제 시작:', categoryName, '인덱스:', deletingCategoryIndex);
+    console.log('카테고리 삭제 시작:', context.category.name, 'id:', deletingCategoryId);
+    ensureTimelineState().categories.splice(context.categoryIndex, 1);
+    delete TL_STATE.ui.collapsedCategoryIds[deletingCategoryId];
+    rebuildColorCachesFromState();
+    renderTimelineFromState();
 
-    // 카테고리 색상 정보 삭제
-    delete categoryColors[categoryName];
-
-    // 1. 타임라인에서 해당 카테고리의 행들 먼저 삭제 (사이드바 변경 전에)
-    deleteTimelineRowsForCategory(deletingCategoryIndex);
-
-    // 2. 해당 카테고리의 모든 프로젝트 아이템 삭제 (사이드바)
-    var deletedProjectCount = $('.project-item[data-category-index="' + deletingCategoryIndex + '"]').length;
-    $('.project-item[data-category-index="' + deletingCategoryIndex + '"]').remove();
-    console.log('삭제된 프로젝트 아이템 수:', deletedProjectCount);
-
-    // 3. 카테고리 헤더 삭제 (사이드바)
-    categoryHeader.remove();
-
-    console.log('카테고리 삭제 완료:', categoryName);
-    deletingCategoryIndex = null;
+    console.log('카테고리 삭제 완료:', context.category.name);
+    deletingCategoryId = null;
     markDirty();
   }
 
   // 타임라인에서 카테고리 행들 삭제
-  function deleteTimelineRowsForCategory(categoryIndex) {
-    console.log('타임라인 카테고리 행 삭제 시작:', categoryIndex);
-
-    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
-    console.log('삭제할 카테고리 이름:', categoryName);
-
-    if (!categoryName) {
-      console.log('카테고리 이름을 찾을 수 없음 - 삭제 중단');
+  function deleteTimelineRowsForCategory(categoryId) {
+    console.log('타임라인 카테고리 행 삭제 시작:', categoryId);
+    if (!categoryId) {
       return;
     }
 
-    // 해당 카테고리의 모든 행 삭제 (이벤트 행 + 카테고리 행)
-    $('.timeline-row[data-category-name="' + categoryName + '"]').remove();
+    $('.timeline-row[data-category-id="' + categoryId + '"]').remove();
 
     setTimeout(function() {
       updateLineHeight();
@@ -724,15 +775,13 @@ function registerEventHandlers() {
   }
 
   // 타임라인 행들 숨기기 함수
-  function hideTimelineRows(categoryIndex) {
-    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
-    $('.timeline-row[data-category-name="' + categoryName + '"]').not('.category-row').addClass('hidden');
+  function hideTimelineRows(categoryId) {
+    $('.timeline-row[data-category-id="' + categoryId + '"]').not('.category-row').addClass('hidden');
   }
 
   // 타임라인 행들 표시 함수
-  function showTimelineRows(categoryIndex) {
-    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
-    $('.timeline-row[data-category-name="' + categoryName + '"]').not('.category-row').removeClass('hidden');
+  function showTimelineRows(categoryId) {
+    $('.timeline-row[data-category-id="' + categoryId + '"]').not('.category-row').removeClass('hidden');
   }
 
   console.log('이벤트 핸들러 등록 완료');
@@ -749,6 +798,7 @@ $(document).ready(function() {
   if (window.initialTimelineData && window.initialTimelineData.categories) {
     console.log('초기 데이터로 페이지 구성 시작:', window.initialTimelineData);
     applyImportedData(window.initialTimelineData);
+    selectTimelineTab(currentTimelineName);
     console.log('초기 페이지 구성 완료');
   }
   
@@ -972,15 +1022,16 @@ $(document).ready(function() {
     startDayOffset: 0,
     timelineRow: null,
     previewBar: null,
-    eventName: null,
-    categoryName: null
+    eventId: null,
+    categoryId: null
   };
 
   function startScheduleDrawing() {
     if (!currentEditingSchedule) return;
 
     var clickedDate = currentEditingSchedule.clickedDate;
-    var timelineRow = currentEditingSchedule.timelineRow;
+    var timelineRow = $('.timeline-row[data-event-id="' + currentEditingSchedule.eventId + '"]');
+    if (timelineRow.length === 0) return;
 
     var startDateObj = parseLocalDate(clickedDate);
     var dayOffset = Math.round((startDateObj - TL_VIEWPORT.originDate) / 86400000);
@@ -996,8 +1047,8 @@ $(document).ready(function() {
     scheduleDrawing.startDayOffset = dayOffset;
     scheduleDrawing.timelineRow = timelineRow;
     scheduleDrawing.previewBar = $preview;
-    scheduleDrawing.eventName = currentEditingSchedule.eventName;
-    scheduleDrawing.categoryName = currentEditingSchedule.categoryName;
+    scheduleDrawing.eventId = currentEditingSchedule.eventId;
+    scheduleDrawing.categoryId = currentEditingSchedule.categoryId;
 
     $('body').addClass('schedule-drawing');
   }
@@ -1053,11 +1104,10 @@ $(document).ready(function() {
     var endDate = new Date(TL_VIEWPORT.originDate.getTime() + actualEnd * 86400000);
 
     currentEditingSchedule = {
-      eventName: scheduleDrawing.eventName,
-      categoryName: scheduleDrawing.categoryName,
+      eventId: scheduleDrawing.eventId,
+      categoryId: scheduleDrawing.categoryId,
       clickedDate: formatLocalDate(startDate),
-      endDate: formatLocalDate(endDate),
-      timelineRow: scheduleDrawing.timelineRow
+      endDate: formatLocalDate(endDate)
     };
 
     cancelScheduleDrawing();
@@ -1086,8 +1136,11 @@ $(document).ready(function() {
   function openScheduleAddPopup() {
     if (!currentEditingSchedule) return;
 
-    var eventName = currentEditingSchedule.eventName;
-    var categoryName = currentEditingSchedule.categoryName;
+    var eventContext = findEventContextById(currentEditingSchedule.eventId);
+    if (!eventContext) return;
+
+    var eventName = eventContext.event.name;
+    var categoryName = eventContext.category.name;
     var clickedDate = currentEditingSchedule.clickedDate;
 
     // 팝업에 정보 설정
@@ -1123,10 +1176,13 @@ $(document).ready(function() {
   function openScheduleEditPopup() {
     if (!currentEditingScheduleBar) return;
 
-    var scheduleBar = currentEditingScheduleBar.element;
-    var eventName = currentEditingScheduleBar.eventName;
-    var categoryName = currentEditingScheduleBar.categoryName;
-    var scheduleName = currentEditingScheduleBar.scheduleName;
+    var scheduleContext = findScheduleContextById(currentEditingScheduleBar.scheduleId);
+    if (!scheduleContext) return;
+
+    var scheduleBar = $('.project-bar[data-schedule-id="' + currentEditingScheduleBar.scheduleId + '"]');
+    var eventName = scheduleContext.event.name;
+    var categoryName = scheduleContext.category.name;
+    var scheduleName = scheduleContext.schedule.name;
 
     // 팝업에 정보 설정
     $('#scheduleEditEventName').text(eventName);
@@ -1137,12 +1193,9 @@ $(document).ready(function() {
     var startDate = null;
     var endDate = null;
 
-    var title = scheduleBar.attr('title') || '';
-    var dateMatch = title.match(/\((\d{4}-\d{2}-\d{2}) ~ (\d{4}-\d{2}-\d{2})\)/);
-
-    if (dateMatch) {
-      startDate = dateMatch[1];
-      endDate = dateMatch[2];
+    if (scheduleContext.schedule.startDate && scheduleContext.schedule.endDate) {
+      startDate = scheduleContext.schedule.startDate;
+      endDate = scheduleContext.schedule.endDate;
     } else {
       var barLeft = parseInt(scheduleBar.css('left')) || 0;
       var barWidth = scheduleBar.width() || cellWidth;
@@ -1161,13 +1214,12 @@ $(document).ready(function() {
     $('#scheduleEditStartDate').val(startDate);
     $('#scheduleEditEndDate').val(endDate);
 
-    var issueNumber = scheduleBar.attr('data-issue-number') || '';
+    var issueNumber = scheduleContext.schedule.issue || '';
     $('#scheduleEditIssue').val(issueNumber);
 
-    var scheduleKey = eventName + '_' + currentEditingScheduleBar.scheduleIndex;
-    var currentScheduleColor = scheduleColors[scheduleKey] || null;
+    var currentScheduleColor = getScheduleColor(scheduleContext.schedule.id) || null;
 
-    initializeScheduleColorPicker(currentScheduleColor, categoryName);
+    initializeScheduleColorPicker(currentScheduleColor, scheduleContext.category.id);
 
     $('#scheduleEditPopup').addClass('show');
 
@@ -1180,15 +1232,20 @@ $(document).ready(function() {
   function deleteCurrentSchedule() {
     if (!currentEditingScheduleBar) return;
 
-    var scheduleName = currentEditingScheduleBar.scheduleName;
-    var eventName = currentEditingScheduleBar.eventName;
-    var categoryName = currentEditingScheduleBar.categoryName;
+    var scheduleContext = findScheduleContextById(currentEditingScheduleBar.scheduleId);
+    if (!scheduleContext) {
+      currentEditingScheduleBar = null;
+      return;
+    }
+
+    var scheduleName = scheduleContext.schedule.name;
 
     if (confirm('정말로 "' + scheduleName + '" 스케줄을 삭제하시겠습니까?')) {
       console.log('스케줄 삭제:', scheduleName);
 
-      currentEditingScheduleBar.element.remove();
-      updateProjectInfo(eventName, categoryName);
+      scheduleContext.event.schedules.splice(scheduleContext.scheduleIndex, 1);
+      rebuildColorCachesFromState();
+      renderTimelineFromState();
       markDirty();
 
       if ($('#scheduleEditPopup').hasClass('show')) {
@@ -1250,15 +1307,14 @@ $(document).ready(function() {
 
     var timelineRow = $(this);
     var clickedDate = clickedCell.data('date');
-    var eventName = timelineRow.data('event-name');
-    var categoryName = timelineRow.data('category-name');
+    var eventId = timelineRow.data('event-id');
+    var categoryId = timelineRow.data('category-id');
 
     // 현재 편집 중인 스케줄 정보 저장
     currentEditingSchedule = {
-      eventName: eventName,
-      categoryName: categoryName,
-      clickedDate: clickedDate,
-      timelineRow: timelineRow
+      eventId: eventId,
+      categoryId: categoryId,
+      clickedDate: clickedDate
     };
 
     showContextMenu(e, 'empty');
@@ -1429,7 +1485,12 @@ $(document).ready(function() {
     }
     
     if (currentColorEditingTarget.type === 'category') {
-      var oldName = currentColorEditingTarget.categoryName;
+      var category = findCategoryById(currentColorEditingTarget.categoryId);
+      if (!category) {
+        hideColorPickerPopup();
+        return;
+      }
+
       var newName = $('#colorPickerNameInput').val().trim();
 
       if (!newName) {
@@ -1438,46 +1499,18 @@ $(document).ready(function() {
         return;
       }
 
-      // 이름이 변경된 경우 업데이트
-      if (newName !== oldName) {
-        // 사이드바 카테고리 제목 업데이트
-        currentColorEditingTarget.categoryHeader.find('.category-title').text(newName);
-
-        // 타임라인 행들의 data-category-name 업데이트
-        $('.timeline-row[data-category-name="' + oldName + '"]').attr('data-category-name', newName);
-
-        // 색상 맵 키 업데이트
-        if (categoryColors[oldName] !== undefined) {
-          categoryColors[newName] = categoryColors[oldName];
-          delete categoryColors[oldName];
-        }
-
-        currentColorEditingTarget.categoryName = newName;
-      }
-
-      // 카테고리 색상 저장
-      categoryColors[newName] = selectedColor;
-
-      // 해당 카테고리의 모든 이벤트들의 스케줄 바 색상 업데이트
-      updateCategoryScheduleColors(newName, selectedColor);
+      category.name = newName;
+      category.customColor = selectedColor;
+      rebuildColorCachesFromState();
+      renderTimelineFromState();
     } else if (currentColorEditingTarget.type === 'schedule') {
-      // 스케줄 색상 저장
-      var scheduleKey = currentColorEditingTarget.scheduleKey;
-      var categoryColor = getCategoryColor(currentColorEditingTarget.categoryName);
-      
-      // 카테고리 색상과 같으면 개별 색상 제거
-      if (selectedColor === categoryColor) {
-        delete scheduleColors[scheduleKey];
-      } else {
-        scheduleColors[scheduleKey] = selectedColor;
-      }
-      
-      // 색상 미리보기 업데이트
-      $('#scheduleColorPreview').css('background-color', selectedColor);
-      
-      // 스케줄 편집 색상 값 저장
-      if (currentColorEditingTarget.colorValue) {
-        currentColorEditingTarget.colorValue = selectedColor;
+      var scheduleContext = findScheduleContextById(currentColorEditingTarget.scheduleId);
+      if (scheduleContext) {
+        var categoryColor = getCategoryColor(scheduleContext.category.id);
+        scheduleContext.schedule.customColor = (selectedColor === categoryColor) ? null : selectedColor;
+        rebuildColorCachesFromState();
+        renderTimelineFromState();
+        $('#scheduleColorPreview').css('background-color', selectedColor);
       }
     }
     
@@ -1571,97 +1604,34 @@ $(document).ready(function() {
     console.log('=== 새 스케줄 추가 시작 ===');
     console.log('스케줄 정보:', scheduleInfo);
     console.log('스케줄 데이터:', scheduleData);
-    
-    var timelineRow = scheduleInfo.timelineRow;
-    
-    // 날짜 계산 - 종료일 미포함 방식
-    var startDate = new Date(TL_VIEWPORT.originDate.getTime());
-    var projectStartDays = Math.round((scheduleData.start_date - startDate) / (1000 * 60 * 60 * 24));
-    var projectDurationDays = Math.round((scheduleData.end_date - scheduleData.start_date) / (1000 * 60 * 60 * 24));  // 종료일 미포함
-    var barLeft = projectStartDays * <%= cell_width %>;
-    var barWidth = projectDurationDays * <%= cell_width %>;
 
-    console.log('날짜 계산 결과:', {
-      projectStartDays: projectStartDays,
-      projectDurationDays: projectDurationDays,
-      barLeft: barLeft,
-      barWidth: barWidth
-    });
-
-    // 기존 스케줄 바들의 z-index 확인
-    var existingBars = timelineRow.find('.project-bar');
-    var maxZIndex = 100;
-    existingBars.each(function() {
-      var currentZIndex = parseInt($(this).css('z-index')) || 100;
-      if (currentZIndex > maxZIndex) {
-        maxZIndex = currentZIndex;
-      }
-    });
-    var newZIndex = maxZIndex + 1;
-
-    // 색상 확인 (개별 색상 > 카테고리 색상)
-    var scheduleKey = scheduleInfo.eventName + '_' + existingBars.length;
-    var scheduleColor = scheduleColors[scheduleKey];
-    var categoryColor = getCategoryColor(scheduleInfo.categoryName);
-    var appliedColor = scheduleColor || categoryColor;
-
-    var barClass = appliedColor ? 'project-bar custom-color' : 'project-bar issue-' + scheduleData.issue;
-    var barStyle = 'position: absolute; top: 2px; left: ' + barLeft + 'px; width: ' + barWidth + 'px; z-index: ' + newZIndex + ';';
-
-    if (appliedColor) {
-      barStyle += ' background-color: ' + appliedColor + ';';
+    var eventContext = findEventContextById(scheduleInfo.eventId);
+    if (!eventContext) {
+      console.error('이벤트를 찾을 수 없습니다:', scheduleInfo.eventId);
+      return;
     }
 
-    // 새 스케줄 바 생성 (XSS-safe DOM construction)
-    var $newBar = createScheduleBarElement(
-      barClass, barStyle,
-      scheduleData.name,
-      formatLocalDate(scheduleData.start_date),
-      formatLocalDate(scheduleData.end_date),
-      existingBars.length,
-      scheduleData.issue,
-      scheduleData.done_ratio
-    );
+    eventContext.event.schedules.push({
+      id: nextTimelineEntityId('schedule'),
+      name: scheduleData.name,
+      startDate: formatLocalDate(scheduleData.start_date),
+      endDate: formatLocalDate(scheduleData.end_date),
+      issue: scheduleData.issue,
+      doneRatio: scheduleData.done_ratio,
+      customColor: null
+    });
 
-    // 타임라인 행에 추가
-    timelineRow.append($newBar);
-
-    // 새로 추가된 바에 드래그/리사이즈 기능 적용
-    applyDraggableToElements($newBar);
-
-    console.log('새 스케줄 바 추가됨');
-
-    // 사이드바의 스케줄 개수 업데이트
-    updateEventScheduleCount(scheduleInfo.eventName, scheduleInfo.categoryName);
-    
+    rebuildColorCachesFromState();
+    renderTimelineFromState();
     console.log('=== 새 스케줄 추가 완료 ===');
   }
 
   // 이벤트의 스케줄 개수 업데이트 함수
-  function updateEventScheduleCount(eventName, categoryName) {
-    console.log('스케줄 개수 업데이트:', eventName, categoryName);
-    
-    // 해당 이벤트의 사이드바 아이템 찾기
-    $('.project-item').each(function() {
-      var projectItem = $(this);
-      var projectNameEl = projectItem.find('.project-name');
-      var categoryIndex = projectItem.data('category-index');
-      var categoryHeader = $('.category-header[data-category-index="' + categoryIndex + '"]');
-      var currentCategoryName = categoryHeader.find('.category-title').text().trim();
-      
-      if (projectNameEl.text().trim() === eventName && currentCategoryName === categoryName) {
-        // 해당 이벤트의 타임라인 행 찾기
-        var timelineRow = $('.timeline-row[data-event-name="' + eventName + '"][data-category-name="' + categoryName + '"]');
-        var scheduleCount = timelineRow.find('.project-bar').length;
-        
-        // 스케줄 정보 업데이트
-        var projectInfo = projectItem.find('.project-info');
-        projectInfo.text(scheduleCount + '개 스케줄');
-        
-        console.log('스케줄 개수 업데이트 완료:', scheduleCount);
-        return false; // 찾았으므로 반복 종료
-      }
-    });
+  function updateEventScheduleCount(eventId, categoryId) {
+    var eventContext = findEventContextById(eventId);
+    if (!eventContext) return;
+    $('.project-item[data-event-id="' + eventId + '"]').find('.project-info')
+      .text(eventContext.event.schedules.length + '개 스케줄');
   }
 
   // 카테고리 색상 복원 함수는 더 이상 필요하지 않음 (서버에서 직접 렌더링)
@@ -1731,18 +1701,15 @@ $(document).ready(function() {
     if (!TL_STATE.isEditMode) return;
 
     var scheduleBar = $(this);
-    var timelineRow = scheduleBar.closest('.timeline-row');
-    var eventName = timelineRow.data('event-name');
-    var categoryName = timelineRow.data('category-name');
-    var scheduleName = scheduleBar.attr('data-schedule-name') || scheduleBar.find('.project-bar-text').text().trim();
+    var scheduleId = scheduleBar.data('schedule-id');
+    var scheduleContext = findScheduleContextById(scheduleId);
+    if (!scheduleContext) return;
 
     // 현재 편집 중인 스케줄 바 정보 저장
     currentEditingScheduleBar = {
-      element: scheduleBar,
-      eventName: eventName,
-      categoryName: categoryName,
-      scheduleName: scheduleName,
-      scheduleIndex: scheduleBar.data('schedule-index')
+      scheduleId: scheduleId,
+      eventId: scheduleContext.event.id,
+      categoryId: scheduleContext.category.id
     };
 
     showContextMenu(e, 'bar');
@@ -1793,16 +1760,15 @@ $(document).ready(function() {
       return;
     }
     
-    // 스케줄 색상 정보 저장
-    var scheduleKey = currentEditingScheduleBar.eventName + '_' + currentEditingScheduleBar.scheduleIndex;
-    var categoryColor = getCategoryColor(currentEditingScheduleBar.categoryName);
-    
-    // 카테고리 색상과 같으면 개별 색상 제거
-    if (newColor === categoryColor) {
-      delete scheduleColors[scheduleKey];
-    } else {
-      scheduleColors[scheduleKey] = newColor;
+    var scheduleContext = findScheduleContextById(currentEditingScheduleBar.scheduleId);
+    if (!scheduleContext) {
+      console.error('스케줄 컨텍스트를 찾을 수 없습니다.');
+      return;
     }
+
+    var categoryColor = getCategoryColor(scheduleContext.category.id);
+    var appliedColor = (newColor === categoryColor) ? null : newColor;
+    scheduleContext.schedule.customColor = appliedColor;
     
     console.log('스케줄 편집 저장:', {
       name: newScheduleName,
@@ -1812,13 +1778,12 @@ $(document).ready(function() {
       color: newColor
     });
     
-    // 스케줄 바 업데이트
-    updateScheduleBar(currentEditingScheduleBar.element, {
+    updateScheduleBar(currentEditingScheduleBar.scheduleId, {
       name: newScheduleName,
       start_date: parseLocalDate(newStartDate),
       end_date: parseLocalDate(newEndDate),
       issue: newIssueNumber,
-      color: newColor
+      color: appliedColor
     });
     markDirty();
 
@@ -1850,7 +1815,8 @@ $(document).ready(function() {
     console.log('이벤트 편집 저장');
     
     var newName = eventItem.find('.event-edit-input').val().trim();
-    var oldName = eventItem.find('.project-name').text().trim();
+    var eventId = eventItem.data('event-id');
+    var eventContext = findEventContextById(eventId);
     
     if (!newName) {
       alert('이벤트 이름을 입력해주세요.');
@@ -1858,28 +1824,20 @@ $(document).ready(function() {
       return;
     }
     
-    if (newName === oldName) {
+    if (!eventContext) {
+      console.error('이벤트를 찾을 수 없습니다:', eventId);
+      return;
+    }
+
+    if (newName === eventContext.event.name) {
       cancelEventEditMode(eventItem);
       return;
     }
     
-    // 사이드바에서 이벤트 이름 업데이트 (XSS-safe)
-    eventItem.find('.project-name').text(newName);
-    
-    // 타임라인에서 해당 이벤트의 data-event-name 업데이트
-    var categoryIndex = eventItem.data('category-index');
-    var categoryHeader = $('.category-header[data-category-index="' + categoryIndex + '"]');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
-    
-    var timelineRow = $('.timeline-row[data-event-name="' + oldName + '"][data-category-name="' + categoryName + '"]');
-    if (timelineRow.length > 0) {
-      timelineRow.attr('data-event-name', newName);
-      console.log('타임라인 행의 data-event-name 업데이트:', oldName, '->', newName);
-    }
-    
-    eventItem.removeClass('editing');
+    eventContext.event.name = newName;
+    renderTimelineFromState();
     markDirty();
-    console.log('이벤트 이름 변경 완료:', oldName, '->', newName);
+    console.log('이벤트 이름 변경 완료:', eventContext.event.id, '->', newName);
   }
 
   // 이벤트 편집 모드 취소
@@ -1895,34 +1853,26 @@ $(document).ready(function() {
   function deleteEvent(eventItem) {
     console.log('이벤트 삭제 시작');
     
-    var eventName = eventItem.find('.project-name').text().trim();
-    var categoryIndex = eventItem.data('category-index');
-    var categoryHeader = $('.category-header[data-category-index="' + categoryIndex + '"]');
-    var categoryName = categoryHeader.find('.category-title').text().trim();
-    
-    console.log('삭제할 이벤트:', eventName, '카테고리:', categoryName);
-    
-    // 2. 타임라인에서 해당 이벤트 행 삭제
-    var timelineRow = $('.timeline-row[data-event-name="' + eventName + '"][data-category-name="' + categoryName + '"]');
-    if (timelineRow.length > 0) {
-      timelineRow.remove();
-      console.log('타임라인 행 삭제됨');
-    }
-    
-    // 3. 사이드바에서 이벤트 아이템 삭제
-    eventItem.remove();
+    var eventId = eventItem.data('event-id');
+    var eventContext = findEventContextById(eventId);
+    if (!eventContext) return;
+
+    console.log('삭제할 이벤트:', eventContext.event.name, '카테고리:', eventContext.category.name);
+    eventContext.category.events.splice(eventContext.eventIndex, 1);
+    rebuildColorCachesFromState();
+    renderTimelineFromState();
     markDirty();
 
-    console.log('이벤트 삭제 완료:', eventName);
+    console.log('이벤트 삭제 완료:', eventContext.event.name);
   }
   
   
   // 스케줄 색상 선택 UI 초기화 함수
-  function initializeScheduleColorPicker(currentColor, categoryName) {
+  function initializeScheduleColorPicker(currentColor, categoryRef) {
     var displayColor = currentColor;
     if (!displayColor) {
       // 색상이 없으면 카테고리 색상으로 초기화
-      var categoryColor = getCategoryColor(categoryName);
+      var categoryColor = getCategoryColor(categoryRef);
       displayColor = categoryColor || '#6c757d';
     }
     
@@ -1935,23 +1885,22 @@ $(document).ready(function() {
     e.preventDefault();
     
     if (!currentEditingScheduleBar) return;
-    
-    // 현재 스케줄의 색상 정보
-    var scheduleKey = currentEditingScheduleBar.eventName + '_' + currentEditingScheduleBar.scheduleIndex;
-    var currentColor = scheduleColors[scheduleKey] || getCategoryColor(currentEditingScheduleBar.categoryName) || '#6c757d';
+
+    var scheduleContext = findScheduleContextById(currentEditingScheduleBar.scheduleId);
+    if (!scheduleContext) return;
+
+    var currentColor = getScheduleColor(scheduleContext.schedule.id) ||
+      getCategoryColor(scheduleContext.category.id) || TL_CONST.DEFAULT_COLOR;
     
     // 현재 색상 변경 중인 대상 정보 저장
     currentColorEditingTarget = {
       type: 'schedule',
-      scheduleKey: scheduleKey,
-      categoryName: currentEditingScheduleBar.categoryName,
-      eventName: currentEditingScheduleBar.eventName,
-      scheduleIndex: currentEditingScheduleBar.scheduleIndex
+      scheduleId: scheduleContext.schedule.id
     };
     
     // 팝업 타이틀과 대상 이름 설정
     $('#colorPickerTitle').text('스케줄 색상 선택');
-    $('#colorPickerTargetName').text(currentEditingScheduleBar.scheduleName);
+    $('#colorPickerTargetName').text(scheduleContext.schedule.name);
     
     // 현재 색상 설정
     selectedColor = currentColor;
@@ -1966,15 +1915,18 @@ $(document).ready(function() {
     e.preventDefault();
     
     if (!currentEditingScheduleBar) return;
-    
-    var categoryColor = getCategoryColor(currentEditingScheduleBar.categoryName) || '#6c757d';
+
+    var scheduleContext = findScheduleContextById(currentEditingScheduleBar.scheduleId);
+    if (!scheduleContext) return;
+
+    var categoryColor = getCategoryColor(scheduleContext.category.id) || TL_CONST.DEFAULT_COLOR;
     
     // 색상 미리보기 업데이트
     $('#scheduleColorPreview').css('background-color', categoryColor);
     
-    // 스케줄 색상 정보 제거
-    var scheduleKey = currentEditingScheduleBar.eventName + '_' + currentEditingScheduleBar.scheduleIndex;
-    delete scheduleColors[scheduleKey];
+    scheduleContext.schedule.customColor = null;
+    rebuildColorCachesFromState();
+    renderTimelineFromState();
   });
 
   // 이슈 링크 아이콘 클릭 이벤트 (드래그 방해 방지)
@@ -1997,64 +1949,18 @@ $(document).ready(function() {
   
 
   // 카테고리의 모든 이벤트 스케줄 바 색상 업데이트 함수
-  function updateCategoryScheduleColors(categoryName, color) {
-    console.log('카테고리 스케줄 색상 업데이트:', categoryName, color);
-    
-    // 매개변수 검증
-    if (!categoryName || typeof categoryName !== 'string') {
-      console.error('❌ 잘못된 카테고리 이름:', categoryName);
-      return;
+  function updateCategoryScheduleColors(categoryRef, color) {
+    var category = findCategoryById(categoryRef);
+    if (!category && typeof categoryRef === 'string') {
+      category = ensureTimelineState().categories.find(function(item) {
+        return item.name === categoryRef;
+      }) || null;
     }
-    
-    if (!color || typeof color !== 'string') {
-      console.error('❌ 잘못된 색상 값:', color);
-      return;
-    }
-    
-    // categoryColors 객체 안전성 확인
-    if (typeof categoryColors === 'undefined' || categoryColors === null) {
-      console.warn('⚠️ categoryColors 객체가 초기화되지 않음 - 초기화 진행');
-      categoryColors = {};
-    }
-    
-    // 해당 카테고리의 모든 타임라인 행 찾기
-    var timelineRows = $('.timeline-row[data-category-name="' + categoryName + '"]');
-    console.log('업데이트할 타임라인 행 개수:', timelineRows.length);
-    
-    timelineRows.each(function() {
-      var timelineRow = $(this);
-      var eventName = timelineRow.data('event-name');
-      
-      // 해당 행의 모든 스케줄 바 찾기
-      var scheduleBars = timelineRow.find('.project-bar');
-      console.log('이벤트 "' + eventName + '"의 스케줄 바 개수:', scheduleBars.length);
-      
-      // 각 스케줄 바의 색상 업데이트
-      scheduleBars.each(function(scheduleIndex) {
-        var $bar = $(this);
-        
-        // 개별 스케줄 색상이 지정되어 있는지 확인
-        var scheduleKey = eventName + '_' + scheduleIndex;
-        var hasCustomScheduleColor = scheduleColors[scheduleKey] !== undefined;
-        
-        // 개별 색상이 지정된 경우 스킵
-        if (hasCustomScheduleColor) {
-          console.log('스케줄 바 개별 색상 유지:', $bar.text().trim(), '->', scheduleColors[scheduleKey]);
-          return; // continue to next schedule bar
-        }
-        
-        // 기존 상태 클래스 제거
-        $bar.removeClass(function(index, className) {
-          return (className.match(/issue-\S+/g) || []).join(' ');
-        });
-        
-        // 카테고리 색상 적용
-        $bar.css('background-color', color);
-        $bar.addClass('custom-color');
-        
-        console.log('스케줄 바 색상 업데이트:', $bar.text().trim(), '->', color);
-      });
-    });
+    if (!category) return;
+
+    category.customColor = color;
+    rebuildColorCachesFromState();
+    renderTimelineFromState();
   }
 
   // ESC 키로 팝업/메뉴 닫기 (모든 함수 정의 후에 배치)
@@ -2079,4 +1985,3 @@ $(document).ready(function() {
 
 });
 </script>
-

@@ -27,9 +27,9 @@
   /* Dimensions */
   --tl-sidebar-width: 300px;
   --tl-header-height: 80px;
-  --tl-category-height: 30px;
-  --tl-row-height: 50px;
-  --tl-bar-height: 46px;
+  --tl-category-height: 26px;
+  --tl-row-height: 45px;
+  --tl-bar-height: 41px;
 
   /* Z-index Scale */
   --z-grid: 50;
@@ -110,6 +110,7 @@
   flex: 1;
   overflow-y: auto; /* 사이드바 내용 부분만 스크롤 */
   overflow-x: hidden;
+  overscroll-behavior-y: none;
   position: relative; /* 갭 인디케이터의 containing block */
 }
 
@@ -259,7 +260,7 @@
 /* 카테고리 헤더 - 인라인 편집 지원 */
 .category-header {
   background: var(--tl-bg-category);
-  padding: 8px 15px;
+  padding: 3px 15px;
   font-weight: bold;
   font-size: 11px;
   color: var(--tl-text-category);
@@ -646,6 +647,7 @@
   flex: 1; /* 헤더를 제외한 나머지 공간 차지 */
   overflow-y: auto; /* 세로 스크롤 허용 */
   overflow-x: hidden; /* 가로 스크롤은 상위 컨테이너에서 처리 */
+  overscroll-behavior-y: none;
   min-width: 1500px; /* 최소 너비 설정 */
   cursor: grab;
 }
@@ -1698,7 +1700,7 @@ body.timeline-view {
 }
 
 .color-preview-bar {
-  height: 46px;
+  height: var(--tl-bar-height);
   border-radius: 4px;
   padding: 0 12px;
   color: white;

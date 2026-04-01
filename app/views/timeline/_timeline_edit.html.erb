@@ -1,176 +1,63 @@
 <script>
 
-// 새 카테고리 추가 함수
   function addNewCategory(categoryName) {
     console.log('새 카테고리 추가:', categoryName);
 
-    // 새 카테고리 인덱스 계산
-    var maxIndex = -1;
-    $('.category-header').each(function() {
-      var index = $(this).data('category-index');
-      if (index > maxIndex) maxIndex = index;
+    var timeline = ensureTimelineState();
+    timeline.categories.push({
+      id: nextTimelineEntityId('category'),
+      name: categoryName,
+      customColor: TL_CONST.DEFAULT_COLOR,
+      events: []
     });
-    var newCategoryIndex = maxIndex + 1;
-    categoryColors[categoryName] = '#6c757d';
 
-    // 사이드바에 새 카테고리 헤더 추가 (XSS-safe DOM construction)
-    var $categoryHeader = createCategoryHeaderElement(newCategoryIndex, categoryName);
-    $('.sidebar-content').append($categoryHeader);
-    
-    // 타임라인에 새 카테고리 행 추가
-    var cellsHtml = generateCategoryCellsHtml(TL_VIEWPORT.totalDays);
-    
-    var $newRow = $('<div class="timeline-row category-row">').attr('data-category-name', categoryName);
-    $newRow.append($('<div class="timeline-grid">').html(cellsHtml));
-    $('.timeline-body').append($newRow);
-    
-    // 라인 높이 업데이트
-    setTimeout(function() {
-      updateLineHeight();
-    }, 50);
-    
+    rebuildColorCachesFromState();
+    renderTimelineFromState();
     markDirty();
-    console.log('새 카테고리 추가 완료:', categoryName, '기본 색상:', categoryColors[categoryName]);
   }
 
-  // 새 이벤트 추가 함수 (개별 행 추가 방식)
-  function addNewEvent(categoryIndex, eventData) {
+  function addNewEvent(categoryId, eventData) {
     console.log('=== 새 이벤트 추가 시작 ===');
-    console.log('카테고리 인덱스:', categoryIndex);
-    console.log('이벤트 데이터:', eventData);
-    
-    // 1. 사이드바에 프로젝트 아이템 추가
-    var categoryProjects = $('.project-item[data-category-index="' + categoryIndex + '"]');
-    var categoryHeader = $('.category-header[data-category-index="' + categoryIndex + '"]');
-    
-    // XSS-safe DOM construction
-    var $newProject = createEventItemElement(categoryIndex, eventData.name, 0);
-    var newProjectHtml = $newProject.prop('outerHTML');
-    
-    var newProjectElement;
-    if (categoryProjects.length > 0) {
-      categoryProjects.last().after(newProjectHtml);
-      newProjectElement = categoryProjects.last().next();
-      console.log('기존 프로젝트 뒤에 추가');
-    } else {
-      categoryHeader.after(newProjectHtml);
-      newProjectElement = categoryHeader.next();
-      console.log('카테고리 헤더 뒤에 추가');
+
+    var context = findCategoryContextById(categoryId);
+    if (!context) {
+      console.error('카테고리를 찾을 수 없습니다:', categoryId);
+      return;
     }
-    
-    // 2. 타임라인에 해당 행만 추가 (기존 행들은 건드리지 않음)
-    var cellsHtml = generateEventCellsHtml(TL_VIEWPORT.originDate, TL_VIEWPORT.totalDays);
-    
-    var categoryName = $('.category-header[data-category-index="' + categoryIndex + '"] .category-title').text().trim();
-    
-    var $newTimelineRow = $('<div class="timeline-row">').attr({
-      'data-event-name': eventData.name,
-      'data-category-name': categoryName
+
+    context.category.events.push({
+      id: eventData.id || nextTimelineEntityId('event'),
+      name: eventData.name,
+      schedules: []
     });
-    $newTimelineRow.append($('<div class="timeline-grid">').html(cellsHtml));
-    var newTimelineRowHtml = $newTimelineRow.prop('outerHTML');
-    
-    // 타임라인에서 올바른 위치 찾기
-    var timelineInsertPosition = findTimelineInsertPosition(categoryIndex, newProjectElement);
-    var newTimelineRow;
-    if (timelineInsertPosition.method === 'after') {
-      timelineInsertPosition.element.after(newTimelineRowHtml);
-      newTimelineRow = timelineInsertPosition.element.next();
-    } else {
-      timelineInsertPosition.element.before(newTimelineRowHtml);
-      newTimelineRow = timelineInsertPosition.element.prev();
-    }
-    
-    // 새로 추가된 행의 프로젝트 바들에 대해 드래그/리사이즈 기능 적용
-    initializeProjectBarDraggableForRow(newTimelineRow);
-    
-    // 카테고리가 접힌 상태인지 확인하고 필요시 숨기기
-    var categoryHeader = $('.category-header[data-category-index="' + categoryIndex + '"]');
-    if (categoryHeader.hasClass('category-collapsed')) {
-      console.log('접힌 카테고리에 이벤트 추가됨 - 자동으로 숨기기');
-      newProjectElement.addClass('hidden');
-      newTimelineRow.addClass('hidden');
-    }
-    
-    // 라인 높이 업데이트
-    setTimeout(function() {
-      updateLineHeight();
-    }, 50);
-    
+
+    renderTimelineFromState();
     markDirty();
     console.log('=== 새 이벤트 추가 완료 ===');
   }
 
-    // 타임라인 삽입 위치 찾기 함수
-  function findTimelineInsertPosition(categoryIndex, newSidebarElement) {
-    var timelineRows = $('.timeline-row');
-    var sidebarElements = $('.sidebar-content').children();
-    var sidebarIndex = sidebarElements.index(newSidebarElement);
-    var timelineIndex = 0;
-    
-    // 사이드바 순서에 맞는 타임라인 위치 계산
-    for (var i = 0; i < sidebarIndex; i++) {
-        var element = sidebarElements.eq(i);
-        if (element.hasClass('category-header') || element.hasClass('project-item')) {
-            timelineIndex++;
-        }
-    }
-    
-    if (timelineIndex === 0) {
-        // 첫 번째 위치에 삽입
-        return {
-            method: 'before',
-            element: timelineRows.first()
-        };
-    } else if (timelineIndex >= timelineRows.length) {
-        // 마지막 위치에 삽입
-        return {
-            method: 'after',
-            element: timelineRows.last()
-        };
-    } else {
-        // 중간 위치에 삽입
-        return {
-            method: 'before',
-            element: timelineRows.eq(timelineIndex)
-        };
-    }
-  }
-
-  // 이벤트 팝업 숨기기 함수
   function hideEventPopup() {
     $('#eventPopup').removeClass('show');
     currentEditingCategory = null;
   }
 
-  // 스케줄 팝업 숨기기 함수
   function hideSchedulePopup() {
     $('#schedulePopup').removeClass('show');
     currentEditingSchedule = null;
   }
 
-  
-  // 색상 선택 팝업 숨기기 함수
   function hideColorPickerPopup() {
     $('#colorPickerPopup').removeClass('show');
     $('#colorPickerNameSection').hide();
     currentColorEditingTarget = null;
-    selectedColor = '#6c757d';
+    selectedColor = TL_CONST.DEFAULT_COLOR;
   }
-  
-  // 색상 선택 UI 업데이트 함수
+
   function updateColorSelection(color) {
-    // 모든 색상 아이템에서 선택 해제
     $('.color-preset-item').removeClass('selected');
-    
-    // 해당하는 색상 아이템에 선택 표시
     $('.color-preset-item[data-color="' + color + '"]').addClass('selected');
-    
-    // 미리보기 바 색상 업데이트
     $('#colorPreviewBar').css('background-color', color);
-    
-    // 커스텀 색상 입력 필드 업데이트
     $('#customColorPicker').val(color);
   }
 
-  </script>
+</script>

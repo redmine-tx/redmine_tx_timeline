@@ -6,7 +6,7 @@
   // ============================================================
   
   /**
-   * DOM에서 타임라인 데이터를 JSON 구조로 수집
+   * 현재 state에서 타임라인 데이터를 JSON 구조로 수집
    * @param {string} name - 타임라인 이름
    * @param {Object} options - 옵션 객체
    * @param {boolean} options.includeTimeline - timeline 정보 포함 여부 (XLSX용, 기본값: false)
@@ -14,121 +14,8 @@
    */
   function collectTimelineDataAsJSON(name = 'Default', options = {}) {
     var includeTimeline = options.includeTimeline || false;
-    
     console.log('=== collectTimelineDataAsJSON 시작 ===', { name: name, includeTimeline: includeTimeline });
-    
-    var jsonData = {
-      metadata: {
-        exportDate: new Date().toISOString(),
-        name: name,
-        version: "1.0",
-        description: "Redmine 타임라인 데이터"
-      },
-      categories: []
-    };
-    
-    // XLSX 내보내기용: options에 날짜 정보 추가 (기존 JSON 저장 형식과의 호환성을 위해 선택적)
-    if (includeTimeline) {
-      jsonData.options = jsonData.options || {};
-      jsonData.options.startDate = formatLocalDate(TL_VIEWPORT.originDate);
-      jsonData.options.endDate = formatLocalDate(TL_VIEWPORT.endDate);
-    }
-    
-    // 데이터 캐싱을 위한 변수들
-    var categoryMap = {};
-    var eventMap = {};
-    
-    // 1단계: 모든 DOM 요소를 한 번에 가져와서 캐싱
-    var allCategoryHeaders = $('.category-header').toArray();
-    var allProjectItems = $('.project-item').toArray();
-    var allTimelineRows = $('.timeline-row').toArray();
-    
-    // 2단계: 카테고리별로 데이터 맵 생성
-    allCategoryHeaders.forEach(function(header) {
-      var $header = $(header);
-      var categoryIndex = $header.data('category-index');
-      var categoryName = $header.find('.category-title').text().trim();
-      
-      var categoryData = {
-        name: categoryName,
-        index: categoryIndex,
-        events: []
-      };
-      
-      // 카테고리 커스텀 색상 정보 추가
-      if (categoryColors[categoryName]) {
-        categoryData.customColor = categoryColors[categoryName];
-      }
-      
-      categoryMap[categoryIndex] = categoryData;
-    });
-    
-    // 3단계: 이벤트별로 데이터 맵 생성
-    allProjectItems.forEach(function(item) {
-      var $item = $(item);
-      var categoryIndex = $item.data('category-index');
-      var eventName = $item.find('.project-name').text().trim();
-      
-      if (categoryMap[categoryIndex]) {
-        var eventData = {
-          name: eventName,
-          schedules: []
-        };
-        categoryMap[categoryIndex].events.push(eventData);
-        eventMap[categoryIndex + '_' + eventName] = eventData;
-      }
-    });
-    
-    // 4단계: 타임라인 행별로 스케줄 일괄 처리
-    allTimelineRows.forEach(function(row) {
-      var $row = $(row);
-      var categoryName = $row.data('category-name');
-      var eventName = $row.data('event-name');
-      
-      // 해당 카테고리 찾기
-      var category = Object.values(categoryMap).find(function(c) { return c.name === categoryName; });
-      if (!category) return;
-      
-      var eventKey = category.index + '_' + eventName;
-      var eventData = eventMap[eventKey];
-      if (!eventData) return;
-      
-      // 스케줄 바들을 한 번에 처리
-      var scheduleBars = $row.find('.project-bar').toArray();
-      scheduleBars.forEach(function(bar, barIndex) {
-        var $bar = $(bar);
-        var title = $bar.attr('title') || '';
-        var scheduleName = $bar.attr('data-schedule-name') || $bar.find('.project-bar-text').text().trim();
-        
-        // 날짜 추출
-        var dateMatch = title.match(/\((\d{4}-\d{2}-\d{2}) ~ (\d{4}-\d{2}-\d{2})\)/);
-        
-        // 이슈 추출
-        var issueNumber = $bar.attr('data-issue-number') || '';
-        var doneRatio = $bar.attr('data-done-ratio') || null;
-        
-        var scheduleData = {
-          name: scheduleName,
-          startDate: dateMatch ? dateMatch[1] : null,
-          endDate: dateMatch ? dateMatch[2] : null,
-          issue: issueNumber,
-          doneRatio: doneRatio
-        };
-        
-        // 개별 스케줄 색상
-        var scheduleIndex = $bar.data('schedule-index') || barIndex;
-        var scheduleKey = eventName + '_' + scheduleIndex;
-        if (scheduleColors[scheduleKey]) {
-          scheduleData.customColor = scheduleColors[scheduleKey];
-        }
-        
-        eventData.schedules.push(scheduleData);
-      });
-    });
-    
-    // 5단계: 최종 데이터 구조 생성
-    jsonData.categories = Object.values(categoryMap);
-    
+    var jsonData = serializeTimelineState(name, { includeTimeline: includeTimeline });
     console.log('=== collectTimelineDataAsJSON 완료 ===', jsonData);
     return jsonData;
   }
@@ -166,29 +53,22 @@
 
   function importTimelineFromJSON( importData )
   {
-    // 기존 데이터 삭제
-      clearAllTimelineData();
-      
-      // 새 데이터 적용
-      applyImportedData(importData);
-      
-      // 추가적인 레이아웃 초기화 (JSON 파일 불러오기용)
-      setTimeout(function() {
-        // 라인 높이 추가 업데이트
-        //updateLineHeight();
+    var importedCopy = $.extend(true, {}, importData);
+    importedCopy.metadata = importedCopy.metadata || {};
+    importedCopy.metadata.name = currentTimelineName;
+    applyImportedData(importedCopy);
 
-        // 스크롤 위치 복원 (오늘 날짜 위치)
-        var todayPosition = Math.round((new Date() - TL_VIEWPORT.originDate) / (1000 * 60 * 60 * 24)) * TL_VIEWPORT.cellWidth;
-        var timelineContainer = $('.timeline-main');
-        var containerWidth = timelineContainer.width();
-        var scrollLeft = Math.max(0, todayPosition - containerWidth * 0.2);
-        timelineContainer.scrollLeft(scrollLeft);
+    setTimeout(function() {
+      var todayPosition = Math.round((new Date() - TL_VIEWPORT.originDate) / (1000 * 60 * 60 * 24)) * TL_VIEWPORT.cellWidth;
+      var timelineContainer = $('.timeline-main');
+      var containerWidth = timelineContainer.width();
+      var scrollLeft = Math.max(0, todayPosition - containerWidth * 0.2);
+      timelineContainer.scrollLeft(scrollLeft);
 
-        // 현재 모드 재적용
-        if (typeof setEditMode === 'function') {
-          setEditMode(TL_STATE.isEditMode);
-        }
-      }, 200);
+      if (typeof setEditMode === 'function') {
+        setEditMode(TL_STATE.isEditMode);
+      }
+    }, 200);
   }
 
   // JSON 데이터 불러오기 함수
